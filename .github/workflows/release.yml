@@ -56,7 +56,8 @@ jobs:
         if: steps.check.outputs.compare_result == 'success'
         run: |
           cd custom_components/${{ steps.check.outputs.comp_name }}
-          zip -r ../../${{ steps.check.outputs.comp_name }}.zip .
+          zip -r ../../${{ steps.check.outputs.comp_name }}.zip . \
+            -x '*/__pycache__/*' '*.py[co]'
 
       - name: Create GitHub Release
         if: steps.check.outputs.compare_result == 'success'
