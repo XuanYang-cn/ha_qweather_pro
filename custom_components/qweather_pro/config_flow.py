@@ -16,6 +16,7 @@ from homeassistant.data_entry_flow import FlowResult
 from homeassistant.helpers import selector
 
 from .api import QWeatherAPI
+from .clients import create_qweather_client
 from .const import (
     DOMAIN,
     CONF_USE_TOKEN,
@@ -48,6 +49,16 @@ def first_version_options(options: dict[str, Any]) -> dict[str, Any]:
         CONF_GIRD: False,
         CONF_CUSTOM_UI: False,
     }
+
+
+def first_version_auth_data(data: dict[str, Any]) -> dict[str, Any]:
+    """Require the account-specific JWT/Ed25519 path for new configuration."""
+    normalized = {
+        **data,
+        CONF_USE_TOKEN: True,
+    }
+    normalized.pop(CONF_API_KEY, None)
+    return normalized
 
 
 class QWeatherConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
@@ -84,19 +95,15 @@ class QWeatherConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
     def _create_api(self, config_data: dict[str, Any]) -> QWeatherAPI:
         """Create a client from Home Assistant's private config-entry data."""
-        return QWeatherAPI(
-            session=async_get_clientsession(self.hass),
-            api_key=config_data.get(CONF_API_KEY),
-            use_token=config_data.get(CONF_USE_TOKEN),
-            project_id=config_data.get(CONF_PROJECT_ID),
-            key_id=config_data.get(CONF_KEY_ID),
-            private_key=config_data.get(CONF_PRIVATE_KEY),
-            host=config_data[CONF_HOST].strip(),
-        )
+        return create_qweather_client(self.hass, config_data)
 
     async def async_step_user(self, user_input: dict[str, Any] | None = None) -> FlowResult:
         """入口步骤：决定是新建还是复用账号."""
-        existing_entries = self._async_current_entries()
+        existing_entries = [
+            entry
+            for entry in self._async_current_entries()
+            if entry.data.get(CONF_USE_TOKEN)
+        ]
         
         # 如果是第一次添加，直接走新建流程
         if not existing_entries:
@@ -134,10 +141,8 @@ class QWeatherConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     async def async_step_setup(self, user_input: dict[str, Any] | None = None) -> FlowResult:
         """标准设置页面."""
         if user_input is not None:
-            self._temp_data.update(user_input)
-            if user_input.get(CONF_USE_TOKEN):
-                return await self.async_step_jwt_setup()
-            return await self._async_search_location(self._temp_data)
+            self._temp_data.update(first_version_auth_data(user_input))
+            return await self.async_step_jwt_setup()
 
         default_location = quantize_coordinates(
             self.hass.config.longitude,
@@ -148,10 +153,6 @@ class QWeatherConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             data_schema=vol.Schema({
                 vol.Required(CONF_HOST): selector.TextSelector(),
                 vol.Required(CONF_LOCATION_ID, default=default_location): selector.TextSelector(),                                       
-                vol.Required(CONF_USE_TOKEN, default=False): selector.BooleanSelector(),
-                vol.Optional(CONF_API_KEY): selector.TextSelector(
-                    selector.TextSelectorConfig(type=selector.TextSelectorType.PASSWORD)
-                ),
             }),
             description_placeholders={
                 "qweather_console": "https://console.qweather.com"
@@ -389,14 +390,11 @@ class QWeatherConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         
         if user_input is not None:
             # 合并旧数据与新输入
-            self._temp_data = {**entry.data, **user_input}
-            
-            # 如果勾选了使用 Token，跳转到 JWT 配置页
-            if user_input.get(CONF_USE_TOKEN):
-                return await self.async_step_jwt_setup()
-            
-            # 否则直接走搜索校验逻辑
-            return await self._async_search_location(self._temp_data)
+            self._temp_data = {
+                **entry.data,
+                **first_version_auth_data(user_input),
+            }
+            return await self.async_step_jwt_setup()
 
         # 初始显示重新配置表单
         return self.async_show_form(
@@ -404,10 +402,6 @@ class QWeatherConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             data_schema=vol.Schema({
                 vol.Required(CONF_HOST, default=entry.data.get(CONF_HOST, "")): selector.TextSelector(),
                 vol.Required(CONF_LOCATION_ID, default=entry.data.get(CONF_LOCATION_ID, "")): selector.TextSelector(),
-                vol.Required(CONF_USE_TOKEN, default=entry.data.get(CONF_USE_TOKEN, False)): selector.BooleanSelector(),
-                vol.Optional(CONF_API_KEY, default=entry.data.get(CONF_API_KEY, "")): selector.TextSelector(
-                    selector.TextSelectorConfig(type=selector.TextSelectorType.PASSWORD)
-                ),
             })
         )
 

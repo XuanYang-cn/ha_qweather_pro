@@ -12,6 +12,17 @@ from tenacity import retry, stop_after_attempt, wait_exponential
 
 from .const import DOMAIN, LOGGER
 
+
+def _log_retry_exhaustion(retry_state) -> None:
+    """Log retry exhaustion without exposing a private API hostname."""
+    error = retry_state.outcome.exception()
+    LOGGER.error(
+        "QWeather API request failed after %s attempts (%s)",
+        retry_state.attempt_number,
+        type(error).__name__ if error is not None else "unknown error",
+    )
+
+
 class QWeatherAPI:
     """和风天气 API 高级封装客户端."""
 
@@ -68,10 +79,7 @@ class QWeatherAPI:
     @retry(
         wait=wait_exponential(multiplier=2, min=2, max=10),
         stop=stop_after_attempt(3),
-        retry_error_callback=lambda retry_state: LOGGER.error(
-            "和风天气 API 请求在 %s 次尝试后彻底失败: %s",
-            retry_state.attempt_number, retry_state.outcome.exception()
-        )
+        retry_error_callback=_log_retry_exhaustion,
     )
 
     async def request(self, version_path: str, endpoint: str, params: dict[str, Any]) -> dict[str, Any]:

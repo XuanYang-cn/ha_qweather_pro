@@ -7,6 +7,8 @@ from typing import Any, Protocol
 
 
 COORDINATE_GRID_DEGREES = Decimal("0.05")
+_CHINA_NAMES = {"china", "cn", "中国"}
+_SHANGHAI_NAMES = {"shanghai", "上海", "上海市"}
 
 
 class LocationLookupClient(Protocol):
@@ -52,6 +54,37 @@ def _warning_jurisdiction(location: dict[str, Any]) -> tuple[Any, Any, Any]:
     return location.get("country"), location.get("adm1"), location.get("adm2")
 
 
+def _normalized_place_name(value: Any) -> str:
+    return str(value or "").strip().casefold()
+
+
+def is_expected_shanghai_jurisdiction(location: dict[str, Any]) -> bool:
+    """Return whether one provider location is the household Shanghai area."""
+    country, adm1, adm2 = (
+        _normalized_place_name(part) for part in _warning_jurisdiction(location)
+    )
+    return (
+        country in _CHINA_NAMES
+        and adm1 in _SHANGHAI_NAMES
+        and adm2 in _SHANGHAI_NAMES
+    )
+
+
+def verified_shanghai_location(response: dict[str, Any]) -> dict[str, Any]:
+    """Return the first verified Shanghai location or fail closed."""
+    candidates = response.get("location", []) if response.get("code") == "200" else []
+    try:
+        return next(
+            candidate
+            for candidate in candidates
+            if is_expected_shanghai_jurisdiction(candidate)
+        )
+    except StopIteration as error:
+        raise QuantizedLocationMismatch(
+            "Provider location is outside the expected Shanghai jurisdiction"
+        ) from error
+
+
 async def async_quantize_and_verify_location(
     client: LocationLookupClient,
     selected_location: dict[str, Any],
@@ -66,7 +99,14 @@ async def async_quantize_and_verify_location(
     response = await client.city_lookup(coordinates, lang=language)
     expected = _warning_jurisdiction(selected_location)
     candidates = response.get("location", []) if response.get("code") == "200" else []
-    if not any(_warning_jurisdiction(candidate) == expected for candidate in candidates):
+    if (
+        not is_expected_shanghai_jurisdiction(selected_location)
+        or not any(
+            _warning_jurisdiction(candidate) == expected
+            and is_expected_shanghai_jurisdiction(candidate)
+            for candidate in candidates
+        )
+    ):
         raise QuantizedLocationMismatch(
             "Quantized location does not match the selected warning jurisdiction"
         )

@@ -11,12 +11,10 @@
       },      
       "setup": {
         "title": "配置和风天气Pro",
-        "description": "### 添加步骤\r\n**前往[和风天气控制台]({qweather_console}):**\r\n1. 在设置中复制 **API Host** 填写下方的 **API Host**。\r\n2. 项目管理 → 创建项目, 在项目中添加凭据: 可选 **JSON Web Token** 和 **API KEY**。\r\n3. 地理位置建议输入 经纬度(高德坐标) 或者 城市名称，可选：城市ID。\n4. 地理位置默认为HA经纬度。\n#### 注意: API KEY 认证方式无法提供足够的安全性, 使用 API KEY 认证方式都将受请求量的限制, 推荐使用 JSON Web Token(JWT) 的认证方式！",
+        "description": "### 添加步骤\r\n前往[和风天气控制台]({qweather_console})，复制账户专属 **API Host**，并创建 **JSON Web Token** 凭据。下方可输入城市、城市 ID 或经纬度；坐标会在查询前量化，并且必须仍属于预期的上海气象预警辖区。",
         "data": {
           "host": "API 服务器地址(API Host)",
-          "location_id": "地理位置 支持城市名称、城市ID、经纬度(经度在前)。",
-          "use_token": "使用 JWT 认证 (推荐，更安全)",
-          "api_key": "普通 API Key (使用 JWT 则留空)"
+          "location_id": "城市、城市 ID 或经纬度（经度在前）"
         }
       },
       "jwt_setup": {

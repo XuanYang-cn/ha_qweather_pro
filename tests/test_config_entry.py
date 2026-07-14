@@ -4,8 +4,11 @@ import importlib
 from types import MappingProxyType, SimpleNamespace
 from unittest.mock import AsyncMock
 
+import pytest
+
 from homeassistant.config_entries import ConfigEntry, ConfigEntryState
 from homeassistant.const import CONF_HOST
+from homeassistant.exceptions import ConfigEntryNotReady
 
 import custom_components.qweather_pro as integration
 from custom_components.qweather_pro.clients import ProviderClients
@@ -31,7 +34,7 @@ def _config_entry() -> ConfigEntry:
     return ConfigEntry(
         data={
             CONF_HOST: "weather-api.example.invalid",
-            CONF_LOCATION_ID: "121.45,31.25",
+            CONF_LOCATION_ID: "121.4737,31.2304",
             CONF_USE_TOKEN: True,
             CONF_PROJECT_ID: "synthetic-project",
             CONF_KEY_ID: "synthetic-key-id",
@@ -50,8 +53,21 @@ def _config_entry() -> ConfigEntry:
         state=ConfigEntryState.SETUP_IN_PROGRESS,
         subentries_data=(),
         title="Synthetic Shanghai",
-        unique_id="qw_121.45_31.25",
+        unique_id="qw_121.47_31.23",
         version=1,
+    )
+
+
+def _patch_provider_clients(monkeypatch, clients: ProviderClients) -> None:
+    monkeypatch.setattr(
+        integration,
+        "create_provider_clients",
+        lambda _hass, _entry: clients,
+    )
+    monkeypatch.setattr(
+        integration,
+        "async_get_integration",
+        AsyncMock(return_value=SimpleNamespace(version="1.1.6-yx.0")),
     )
 
 
@@ -77,22 +93,22 @@ async def test_full_config_entry_uses_programmable_offline_clients(
             await module.async_setup_entry(hass, entry, entities.extend)
 
     hass.config_entries.async_forward_entry_setups.side_effect = forward_entry_setups
-    monkeypatch.setattr(
-        integration,
-        "create_provider_clients",
-        lambda _hass, _entry: clients,
-    )
-    monkeypatch.setattr(
-        integration,
-        "async_get_integration",
-        AsyncMock(return_value=SimpleNamespace(version="1.1.6-yx.0")),
-    )
+    _patch_provider_clients(monkeypatch, clients)
     entry = _config_entry()
     assert CONF_PRIVATE_KEY not in entry.data
 
     assert await integration.async_setup_entry(hass, entry)
 
-    assert qweather.calls == ["now", "daily", "hourly", "warning", "air", "indices"]
+    assert qweather.calls == [
+        "location",
+        "now",
+        "daily",
+        "hourly",
+        "warning",
+        "air",
+        "indices",
+    ]
+    assert qweather.location_calls == [("121.45,31.25", "zh")]
     assert nationwide.calls == 1
     assert entry.runtime_data.data["now"]["temp"] == 24.0
     assert entry.runtime_data.data["nationwide_warnings"] == nationwide_snapshot
@@ -119,3 +135,34 @@ async def test_full_config_entry_uses_programmable_offline_clients(
         entry, PLATFORMS
     )
     assert f"{DOMAIN}_assets" not in hass.data
+
+
+async def test_existing_non_shanghai_entry_fails_before_weather_requests(
+    hass,
+    monkeypatch,
+) -> None:
+    """Preserve entry identity but reject an unexpected runtime jurisdiction."""
+    qweather = FakeQWeatherClient()
+    qweather.responses["location"] = {
+        "code": "200",
+        "location": [
+            {
+                "country": "中国",
+                "adm1": "江苏省",
+                "adm2": "苏州市",
+            }
+        ],
+    }
+    clients = ProviderClients(
+        qweather=qweather,
+        nationwide_warnings=FakeNationwideWarningClient({}),
+    )
+    _patch_provider_clients(monkeypatch, clients)
+    entry = _config_entry()
+
+    with pytest.raises(ConfigEntryNotReady):
+        await integration.async_setup_entry(hass, entry)
+
+    assert entry.unique_id == "qw_121.47_31.23"
+    assert qweather.location_calls == [("121.45,31.25", "zh")]
+    assert qweather.calls == ["location"]

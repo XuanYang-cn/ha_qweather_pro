@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from collections.abc import Mapping
 from typing import Any, Protocol
 
 from homeassistant.config_entries import ConfigEntry
@@ -21,7 +22,7 @@ from .const import (
 
 
 class NationwideWarningClient(Protocol):
-    """Interface reserved for the isolated China Weather warning provider."""
+    """Baseline seam for the required isolated China Weather provider client."""
 
     async def async_fetch_active_warnings(self) -> dict[str, Any]:
         """Return one provider snapshot."""
@@ -29,6 +30,8 @@ class NationwideWarningClient(Protocol):
 
 class QWeatherClient(Protocol):
     """QWeather endpoints consumed by the first fork version."""
+
+    async def city_lookup(self, location: str, lang: str) -> dict[str, Any]: ...
 
     async def get_weather_now(self, lat: str, lon: str, lang: str) -> dict[str, Any]: ...
 
@@ -48,7 +51,7 @@ class QWeatherClient(Protocol):
 
 
 class DisabledNationwideWarningClient:
-    """Represent the nationwide feed before its provider is implemented."""
+    """Keep refresh offline until the nationwide provider task is implemented."""
 
     async def async_fetch_active_warnings(self) -> dict[str, Any]:
         """Return an explicit disabled snapshot without making network calls."""
@@ -67,20 +70,29 @@ class ProviderClients:
     nationwide_warnings: NationwideWarningClient
 
 
+def create_qweather_client(
+    hass: HomeAssistant,
+    config_data: Mapping[str, Any],
+) -> QWeatherAPI:
+    """Create one QWeather client from private Home Assistant config data."""
+    configured_host = config_data.get(CONF_HOST)
+    return QWeatherAPI(
+        session=async_get_clientsession(hass),
+        api_key=config_data.get(CONF_API_KEY),
+        use_token=config_data.get(CONF_USE_TOKEN),
+        project_id=config_data.get(CONF_PROJECT_ID),
+        key_id=config_data.get(CONF_KEY_ID),
+        private_key=config_data.get(CONF_PRIVATE_KEY),
+        host=str(configured_host).strip() if configured_host is not None else None,
+    )
+
+
 def create_provider_clients(
     hass: HomeAssistant,
     entry: ConfigEntry,
 ) -> ProviderClients:
     """Create production provider clients without exposing credentials."""
     return ProviderClients(
-        qweather=QWeatherAPI(
-            session=async_get_clientsession(hass),
-            api_key=entry.data.get(CONF_API_KEY),
-            use_token=entry.data.get(CONF_USE_TOKEN),
-            project_id=entry.data.get(CONF_PROJECT_ID),
-            key_id=entry.data.get(CONF_KEY_ID),
-            private_key=entry.data.get(CONF_PRIVATE_KEY),
-            host=entry.data.get(CONF_HOST),
-        ),
+        qweather=create_qweather_client(hass, entry.data),
         nationwide_warnings=DisabledNationwideWarningClient(),
     )

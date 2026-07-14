@@ -19,6 +19,10 @@ from .const import (
     DEFAULT_UPDATE_INTERVAL, LANGUAGE_MAP, LOGGER
 )
 from .condition import CONDITION_MAP
+from .location import (
+    quantize_location_input,
+    verified_shanghai_location,
+)
 
 # --- 数据缓存有效期控制 (单位: 秒) ---
 # 每日预报：7200秒 (2小时)
@@ -50,7 +54,8 @@ class QWeatherUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         """初始化协调器."""
         self.entry = entry
         self.version = version
-        self.location = entry.data.get(CONF_LOCATION_ID)
+        self.location = quantize_location_input(entry.data.get(CONF_LOCATION_ID, ""))
+        self._location_verified = False
         self.city_name = entry.title
         self._consecutive_failures = 0 # 追踪连续失败次数
 
@@ -98,6 +103,19 @@ class QWeatherUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
     async def _async_update_data(self) -> dict[str, Any]:
         """主抓取任务：调用 api.py 进行多端点并发请求."""
+
+        if not self._location_verified:
+            try:
+                location_response = await self.api.city_lookup(
+                    self.location,
+                    lang="zh",
+                )
+                verified_shanghai_location(location_response)
+            except Exception as err:
+                raise UpdateFailed(
+                    "Configured location is outside the expected Shanghai jurisdiction"
+                ) from err
+            self._location_verified = True
 
         # 国际化语言适配
         ha_lang = self.hass.config.language # 例如 "zh-Hans" 或 "fr"

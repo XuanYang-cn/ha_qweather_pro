@@ -40,6 +40,23 @@ def test_coordinate_input_is_quantized_before_lookup_but_city_names_are_preserve
     assert quantize_location_input("上海市") == "上海市"
 
 
+async def test_non_shanghai_location_fails_even_when_quantized_jurisdiction_matches() -> None:
+    suzhou = {
+        **SYNTHETIC_SHANGHAI,
+        "name": "苏州",
+        "adm1": "江苏省",
+        "adm2": "苏州市",
+    }
+    client = FakeLookupClient([suzhou])
+
+    with pytest.raises(QuantizedLocationMismatch):
+        await async_quantize_and_verify_location(
+            client,
+            suzhou,
+            language="zh",
+        )
+
+
 async def test_quantized_point_must_remain_in_the_same_warning_jurisdiction() -> None:
     verified = {
         **SYNTHETIC_SHANGHAI,

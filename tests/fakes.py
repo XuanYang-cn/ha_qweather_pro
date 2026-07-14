@@ -5,6 +5,20 @@ from typing import Any
 
 
 QWEATHER_RESPONSES = {
+    "location": {
+        "code": "200",
+        "location": [
+            {
+                "id": "synthetic-shanghai",
+                "name": "上海",
+                "country": "中国",
+                "adm1": "上海市",
+                "adm2": "上海市",
+                "lon": "121.45",
+                "lat": "31.25",
+            }
+        ],
+    },
     "now": {
         "code": "200",
         "now": {
@@ -47,6 +61,7 @@ class FakeQWeatherClient:
     def __init__(self, responses: dict[str, dict[str, Any]] | None = None) -> None:
         self.responses = deepcopy(responses or QWEATHER_RESPONSES)
         self.calls: list[str] = []
+        self.location_calls: list[tuple[str, str]] = []
 
     async def _response(self, name: str) -> dict[str, Any]:
         self.calls.append(name)
@@ -54,6 +69,11 @@ class FakeQWeatherClient:
 
     async def get_weather_now(self, *_args: Any) -> dict[str, Any]:
         return await self._response("now")
+
+    async def city_lookup(self, location: str, lang: str) -> dict[str, Any]:
+        self.calls.append("location")
+        self.location_calls.append((location, lang))
+        return deepcopy(self.responses["location"])
 
     async def get_forecast(self, *_args: Any) -> dict[str, Any]:
         return await self._response("daily")
