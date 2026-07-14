@@ -36,7 +36,7 @@ auto-register the upstream dashboard card or custom more-info UI.
 ```bash
 git fetch upstream --tags
 git switch --detach <reviewed-upstream-tag>
-git switch -c maint/v1.1.6-yx
+git switch -c maint/<X.Y.Z>-yx
 ```
 
 For each new upstream tag, compare every local maintenance commit with that tag

@@ -27,10 +27,11 @@ jobs:
           COMPONENT_NAME=$(basename $(dirname $MANIFEST_FILE))
           NEW_VERSION=$(python3 -c "import json; print(json.load(open('$MANIFEST_FILE'))['version'])")
           
-          # 2. 获取当前仓库中最新的 Tag (如果没有则默认为 v0.0.0)
-          # 注意：这里会过滤掉非 v 开头的标签
-          LATEST_TAG=$(git tag -l "v*" --sort=-v:refname | head -n 1)
-          if [ -z "$LATEST_TAG" ]; then LATEST_TAG="v0.0.0"; fi
+          # 2. 只比较同一上游基线的 fork tag；上游的较高版本不能阻止
+          #    当前基线的 yx.N 候选发布。
+          BASE_VERSION=${NEW_VERSION%-yx.*}
+          LATEST_TAG=$(git tag -l "v${BASE_VERSION}-yx.*" --sort=-version:refname | head -n 1)
+          if [ -z "$LATEST_TAG" ]; then LATEST_TAG="v${BASE_VERSION}"; fi
           OLD_VERSION=${LATEST_TAG#v} # 去掉 v 前缀
 
           echo "检测到新版本: $NEW_VERSION"
