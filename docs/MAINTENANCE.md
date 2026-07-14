@@ -31,13 +31,27 @@ quantized point remains in the expected Shanghai warning jurisdiction (including
 for older config entries), disables grid and minute weather calls, and does not
 auto-register the upstream dashboard card or custom more-info UI.
 
-## Rebuilding the branch
+## Rebuilding and releasing the branch
 
 ```bash
 git fetch upstream --tags
-git switch --detach 9232254cf7dd56c72aefb23b425a4dd29bab1f4e
+git switch --detach <reviewed-upstream-tag>
 git switch -c maint/v1.1.6-yx
 ```
 
-Run `uv sync --group test`, `uv run pytest`, and the compile/lint checks from
-`.github/workflows/tests.yml` before pushing a change.
+For each new upstream tag, compare every local maintenance commit with that tag
+and retain only patches not accepted upstream or not made obsolete by the new
+release. Cherry-pick those focused commits onto the new maintenance branch,
+then run `uv sync --group test`, `uv run pytest`, and the compile/lint checks
+from `.github/workflows/tests.yml`.
+
+Before a fork release, increment the manifest to `X.Y.Z-yx.N`, run the full
+offline suite, push the maintenance branch, create and push the matching
+annotated tag, and publish a GitHub release from that exact tag. The release
+notes must name the fork URL, upstream baseline, maintenance branch, and each
+included local commit, while excluding credentials and household coordinates.
+
+HACS installs only the fork custom repository for the `qweather_pro` domain.
+To roll back, select and reinstall the preceding fork release in HACS, restart
+Home Assistant, and verify that the unchanged config entry, device, and entity
+identities are still attached. Keep the preceding tagged release available.

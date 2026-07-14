@@ -36,10 +36,9 @@ jobs:
           echo "检测到新版本: $NEW_VERSION"
           echo "检测到旧版本: $OLD_VERSION"
 
-          # 3. 使用 Python 进行语义化版本比较 (严格检查 NEW > OLD)
-          # packaging.version 是最稳妥的比较方式
-          python3 -m pip install packaging
-          IS_INCREASED=$(python3 -c "from packaging import version; print(version.parse('$NEW_VERSION') > version.parse('$OLD_VERSION'))")
+          # 3. 比较本 fork 的发布格式：X.Y.Z-yx.N 在相同上游版本中按 N 递增，
+          #    且高于未带本 fork 后缀的上游 tag。
+          IS_INCREASED=$(python3 -c "import re; p=lambda v: (lambda m: (int(m[1]), int(m[2]), int(m[3]), 1 if m[4] else 0, int(m[4] or 0)))(re.fullmatch(r'(\\d+)\\.(\\d+)\\.(\\d+)(?:-yx\\.(\\d+))?', v) or (_ for _ in ()).throw(ValueError(f'invalid fork version: {v}'))); print(p('$NEW_VERSION') > p('$OLD_VERSION'))")
 
           if [ "$IS_INCREASED" = "True" ]; then
             echo "compare_result=success" >> $GITHUB_OUTPUT
