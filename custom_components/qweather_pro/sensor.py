@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Callable
+from typing import TYPE_CHECKING, Any, Callable
 
 from homeassistant.components.sensor import (
     SensorEntity,
@@ -11,8 +11,14 @@ from homeassistant.components.sensor import (
 
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from .const import DOMAIN, ATTRIBUTION, LOGGER
+from .const import ATTRIBUTION
 from .coordinator import QWeatherUpdateCoordinator
+
+if TYPE_CHECKING:
+    from homeassistant.core import HomeAssistant
+    from homeassistant.helpers.entity_platform import AddEntitiesCallback
+
+    from . import QWeatherConfigEntry
 
 @dataclass(frozen=True, kw_only=True)
 class QWeatherSensorEntityDescription(SensorEntityDescription):

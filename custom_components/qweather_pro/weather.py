@@ -17,7 +17,7 @@ from homeassistant.const import (
 )
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from .const import DOMAIN, ATTRIBUTION
+from .const import ATTRIBUTION
 from .coordinator import QWeatherUpdateCoordinator
 
 # 定义天气描述符
