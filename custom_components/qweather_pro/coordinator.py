@@ -159,7 +159,8 @@ class QWeatherUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         refresh_time: datetime,
     ) -> bool:
         """Require source data to be within the dataset's current interval."""
-        return refresh_time - provider_time < DATASET_INTERVALS[category]
+        source_age = refresh_time - provider_time
+        return timedelta(0) <= source_age < DATASET_INTERVALS[category]
 
     def _dataset_statuses(self, now: datetime) -> dict[str, dict[str, str | None]]:
         """Publish independent freshness and result state for each core dataset."""
@@ -168,13 +169,14 @@ class QWeatherUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             last_success = self._last_success_times.get(category)
             result = self._last_update_results[category]
             provider_time = self._provider_time(category)
+            provider_timestamp = self._parse_provider_time(provider_time)
             if self._cache_data[category] is None:
                 state = "unavailable"
             elif result in {"failed", "unchanged", "stale"}:
                 state = "stale"
-            elif last_success is None or provider_time is None:
+            elif last_success is None or provider_timestamp is None:
                 state = "unavailable"
-            elif now - last_success >= DATASET_INTERVALS[category]:
+            elif not self._provider_time_is_current(category, provider_timestamp, now):
                 state = "stale"
             else:
                 state = "fresh"
@@ -221,9 +223,9 @@ class QWeatherUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         except ValueError as error:
             raise UpdateFailed("Invalid configured location format") from error
 
-        tasks: dict[str, Any] = {
-            "now": self.api.get_weather_now(lat, lon, qweather_lang),
-        }
+        tasks: dict[str, Any] = {}
+        if self._should_update("now", refresh_time):
+            tasks["now"] = self.api.get_weather_now(lat, lon, qweather_lang)
         if self._should_update("daily", refresh_time):
             tasks["daily"] = self.api.get_forecast(lat, lon, "7d", qweather_lang)
         if self._should_update("hourly", refresh_time):

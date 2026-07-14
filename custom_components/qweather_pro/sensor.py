@@ -65,7 +65,7 @@ SENSOR_DESCRIPTIONS: tuple[QWeatherSensorEntityDescription, ...] = (
             # 基础数据
             "aqi_value": (aqi := data.get("aqi", {})).get("aqi"),
             "aqi_level": aqi.get("level"),
-            "primary_pollutant": aqi.get("primary", "none"),
+            "primary_pollutant": aqi.get("primary") or "unknown",
 
             # 污染物浓度 (带单位，且增加空值保护)
             # 使用 get(..., '--') 确保在数据缺失时不会显示 'None μg/m3'
@@ -77,11 +77,11 @@ SENSOR_DESCRIPTIONS: tuple[QWeatherSensorEntityDescription, ...] = (
             "co": f"{aqi.get('co', '--')} {aqi.get('co_unit', 'ppm')}",
 
             # 健康建议 (V1 接口的精华字段)
-            "health_effect": aqi.get("health_effect", "no_data_available"),
-            "health_advice": aqi.get("health_advice", "no_data_available"),
+            "health_effect": aqi.get("health_effect") or "unknown",
+            "health_advice": aqi.get("health_advice") or "unknown",
 
             # 监测站信息
-            "stations": aqi.get("stations", "stations_info"),
+            "stations": aqi.get("stations"),
         },
     ),
     QWeatherSensorEntityDescription(

@@ -172,6 +172,7 @@ async def test_full_config_entry_uses_programmable_offline_clients(
     assert "custom_ui_more_info" not in weather.extra_state_attributes
     assert weather.extra_state_attributes["dataset_status"]["now"]["state"] == "fresh"
     assert aqi.extra_state_attributes["dataset_status"]["air"]["state"] == "fresh"
+    assert aqi.extra_state_attributes["primary_pollutant"] == "unknown"
     assert precipitation.native_value is None
     hass.config_entries.async_forward_entry_setups.assert_awaited_once_with(
         entry, PLATFORMS
@@ -362,6 +363,93 @@ async def test_ancient_provider_observation_is_stale_on_first_refresh(
         "last_update_result": "stale",
         "state": "stale",
     }
+
+
+async def test_future_provider_observation_is_stale_on_first_refresh(
+    hass,
+    monkeypatch,
+) -> None:
+    """A timezone-offset timestamp from the future cannot be fresh source data."""
+    qweather = FakeQWeatherClient()
+    qweather.responses["now"]["now"]["obsTime"] = "2026-07-14T08:01+08:00"
+    _patch_provider_clients(
+        monkeypatch,
+        ProviderClients(
+            qweather=qweather,
+            nationwide_warnings=FakeNationwideWarningClient({}),
+        ),
+    )
+    entry = _config_entry()
+
+    assert await integration.async_setup_entry(hass, entry)
+
+    assert entry.runtime_data.data["dataset_status"]["now"] == {
+        "provider_time": "2026-07-14T08:01+08:00",
+        "last_success_time": None,
+        "last_update_result": "stale",
+        "state": "stale",
+    }
+
+
+@pytest.mark.parametrize("category", ["daily", "hourly", "air"])
+async def test_dataset_freshness_expires_with_provider_time(
+    hass,
+    monkeypatch,
+    category: str,
+) -> None:
+    """A source timestamp near expiry becomes stale without a coordinator grace."""
+    qweather = FakeQWeatherClient()
+    near_expiry = "2026-07-14T07:01+08:00"
+    if category == "air":
+        qweather.responses[category]["indexes"][0]["pubTime"] = near_expiry
+    else:
+        qweather.responses[category]["updateTime"] = near_expiry
+    _patch_provider_clients(
+        monkeypatch,
+        ProviderClients(
+            qweather=qweather,
+            nationwide_warnings=FakeNationwideWarningClient({}),
+        ),
+    )
+    entry = _config_entry()
+
+    assert await integration.async_setup_entry(hass, entry)
+    coordinator = entry.runtime_data
+    initial_success = coordinator.data["dataset_status"][category]["last_success_time"]
+    clock = MutableClock(datetime.fromisoformat(initial_success))
+    monkeypatch.setattr(coordinator, "_now", clock.now)
+    clock.advance(timedelta(minutes=10))
+
+    await coordinator.async_refresh()
+
+    assert coordinator.data["dataset_status"][category]["state"] == "stale"
+
+
+async def test_current_weather_is_not_requested_before_its_10_minute_due_time(
+    hass,
+    monkeypatch,
+) -> None:
+    """An early manual coordinator refresh does not increase provider calls."""
+    qweather = FakeQWeatherClient()
+    _patch_provider_clients(
+        monkeypatch,
+        ProviderClients(
+            qweather=qweather,
+            nationwide_warnings=FakeNationwideWarningClient({}),
+        ),
+    )
+    entry = _config_entry()
+
+    assert await integration.async_setup_entry(hass, entry)
+    coordinator = entry.runtime_data
+    initial_success = coordinator.data["dataset_status"]["now"]["last_success_time"]
+    clock = MutableClock(datetime.fromisoformat(initial_success))
+    monkeypatch.setattr(coordinator, "_now", clock.now)
+    clock.advance(timedelta(minutes=5))
+
+    await coordinator.async_refresh()
+
+    assert qweather.calls.count("now") == 1
 
 
 async def test_refresh_schedule_uses_fixed_10_and_60_minute_contract(
