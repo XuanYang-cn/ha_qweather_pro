@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Mapping
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from homeassistant.config_entries import ConfigEntry
@@ -76,6 +76,7 @@ class QWeatherUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         }
         self._last_success_times: dict[str, datetime] = {}
         self._last_attempt_times: dict[str, datetime] = {}
+        self._latest_provider_times: dict[str, datetime] = {}
         self._last_update_results: dict[str, str] = {
             dataset: "unavailable" for dataset in DATASET_INTERVALS
         }
@@ -138,6 +139,28 @@ class QWeatherUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         """Read a provider timestamp from the retained dataset snapshot."""
         return self._provider_time_from_response(category, self._cache_data.get(category))
 
+    @staticmethod
+    def _parse_provider_time(value: str | None) -> datetime | None:
+        """Parse a provider timestamp only when it has an explicit timezone."""
+        if not isinstance(value, str):
+            return None
+        try:
+            timestamp = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except ValueError:
+            return None
+        if timestamp.tzinfo is None:
+            return None
+        return timestamp.astimezone(timezone.utc)
+
+    @staticmethod
+    def _provider_time_is_current(
+        category: str,
+        provider_time: datetime,
+        refresh_time: datetime,
+    ) -> bool:
+        """Require source data to be within the dataset's current interval."""
+        return refresh_time - provider_time < DATASET_INTERVALS[category]
+
     def _dataset_statuses(self, now: datetime) -> dict[str, dict[str, str | None]]:
         """Publish independent freshness and result state for each core dataset."""
         statuses: dict[str, dict[str, str | None]] = {}
@@ -145,12 +168,14 @@ class QWeatherUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             last_success = self._last_success_times.get(category)
             result = self._last_update_results[category]
             provider_time = self._provider_time(category)
-            if self._cache_data[category] is None or last_success is None:
+            if self._cache_data[category] is None:
                 state = "unavailable"
-            elif result in {"failed", "unchanged"} or now - last_success >= DATASET_INTERVALS[category]:
+            elif result in {"failed", "unchanged", "stale"}:
                 state = "stale"
-            elif provider_time is None:
+            elif last_success is None or provider_time is None:
                 state = "unavailable"
+            elif now - last_success >= DATASET_INTERVALS[category]:
+                state = "stale"
             else:
                 state = "fresh"
             statuses[category] = {
@@ -230,23 +255,34 @@ class QWeatherUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             self._last_attempt_times[category] = refresh_time
             if self._response_succeeded(category, response):
                 provider_time = self._provider_time_from_response(category, response)
-                previous_provider_time = self._provider_time(category)
+                provider_timestamp = self._parse_provider_time(provider_time)
+                previous_provider_timestamp = self._latest_provider_times.get(category)
                 if category in CORE_DATASETS and (
-                    provider_time is None
+                    provider_timestamp is None
                     or (
-                        previous_provider_time is not None
-                        and provider_time == previous_provider_time
+                        previous_provider_timestamp is not None
+                        and provider_timestamp <= previous_provider_timestamp
                     )
                 ):
-                    if previous_provider_time is None:
+                    if previous_provider_timestamp is None:
                         self._cache_data[category] = dict(response)
                         self._last_update_results[category] = "unavailable"
                     else:
                         self._last_update_results[category] = "unchanged"
+                elif category in CORE_DATASETS and not self._provider_time_is_current(
+                    category,
+                    provider_timestamp,
+                    refresh_time,
+                ):
+                    self._cache_data[category] = dict(response)
+                    self._latest_provider_times[category] = provider_timestamp
+                    self._last_update_results[category] = "stale"
                 else:
                     self._cache_data[category] = dict(response)
                     self._last_success_times[category] = refresh_time
                     self._last_update_results[category] = "success"
+                    if provider_timestamp is not None:
+                        self._latest_provider_times[category] = provider_timestamp
             else:
                 self._last_update_results[category] = "failed"
                 LOGGER.debug(

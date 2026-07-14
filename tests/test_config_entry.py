@@ -2,7 +2,7 @@
 
 import asyncio
 import importlib
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from types import MappingProxyType, SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -100,6 +100,11 @@ def _patch_provider_clients(monkeypatch, clients: ProviderClients) -> None:
         integration,
         "async_get_integration",
         AsyncMock(return_value=SimpleNamespace(version="1.1.6-yx.0")),
+    )
+    monkeypatch.setattr(
+        integration.QWeatherUpdateCoordinator,
+        "_now",
+        lambda _self: datetime(2026, 7, 14, tzinfo=timezone.utc),
     )
 
 
@@ -298,6 +303,63 @@ async def test_unchanged_provider_observation_remains_stale(
         "provider_time": "2026-07-14T08:00+08:00",
         "last_success_time": initial_status["last_success_time"],
         "last_update_result": "unchanged",
+        "state": "stale",
+    }
+
+
+async def test_regressing_provider_observation_remains_stale(
+    hass,
+    monkeypatch,
+) -> None:
+    """A provider clock moving backward cannot create a newer weather snapshot."""
+    qweather = FakeQWeatherClient()
+    clients = ProviderClients(
+        qweather=qweather,
+        nationwide_warnings=FakeNationwideWarningClient({}),
+    )
+    _patch_provider_clients(monkeypatch, clients)
+    entry = _config_entry()
+
+    assert await integration.async_setup_entry(hass, entry)
+    coordinator = entry.runtime_data
+    initial_status = coordinator.data["dataset_status"]["now"]
+    clock = MutableClock(datetime.fromisoformat(initial_status["last_success_time"]))
+    monkeypatch.setattr(coordinator, "_now", clock.now)
+    qweather.responses["now"]["now"]["obsTime"] = "2026-07-14T07:50+08:00"
+    clock.advance(timedelta(minutes=10))
+
+    await coordinator.async_refresh()
+
+    assert coordinator.data["dataset_status"]["now"] == {
+        "provider_time": "2026-07-14T08:00+08:00",
+        "last_success_time": initial_status["last_success_time"],
+        "last_update_result": "unchanged",
+        "state": "stale",
+    }
+
+
+async def test_ancient_provider_observation_is_stale_on_first_refresh(
+    hass,
+    monkeypatch,
+) -> None:
+    """An old-but-present source timestamp cannot begin life as fresh data."""
+    qweather = FakeQWeatherClient()
+    qweather.responses["now"]["now"]["obsTime"] = "2026-07-13T08:00+08:00"
+    _patch_provider_clients(
+        monkeypatch,
+        ProviderClients(
+            qweather=qweather,
+            nationwide_warnings=FakeNationwideWarningClient({}),
+        ),
+    )
+    entry = _config_entry()
+
+    assert await integration.async_setup_entry(hass, entry)
+
+    assert entry.runtime_data.data["dataset_status"]["now"] == {
+        "provider_time": "2026-07-13T08:00+08:00",
+        "last_success_time": None,
+        "last_update_result": "stale",
         "state": "stale",
     }
 
