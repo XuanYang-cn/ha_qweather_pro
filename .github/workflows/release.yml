@@ -28,11 +28,29 @@ jobs:
             echo "Tag $GITHUB_REF_NAME does not match manifest version $NEW_VERSION" >&2
             exit 1
           fi
+          BASE_VERSION=${NEW_VERSION%-yx.*}
+          MAINTENANCE_BRANCH="maint/${BASE_VERSION}-yx"
+          git fetch origin "$MAINTENANCE_BRANCH"
+          if [ "$(git rev-parse HEAD)" != "$(git rev-parse "origin/$MAINTENANCE_BRANCH")" ]; then
+            echo "Tag must point at the current $MAINTENANCE_BRANCH head" >&2
+            exit 1
+          fi
           echo "compare_result=success" >> $GITHUB_OUTPUT
           echo "version=$NEW_VERSION" >> $GITHUB_OUTPUT
           echo "comp_name=$COMPONENT_NAME" >> $GITHUB_OUTPUT
           echo "commit_title=$(git log -1 --pretty=format:'%s')" >> $GITHUB_OUTPUT
           echo "is_prerelease=false" >> $GITHUB_OUTPUT
+
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+
+      - name: Validate the exact tagged release commit
+        run: |
+          uv sync --frozen --group test
+          uv run python -m compileall -q custom_components/qweather_pro
+          uv run ruff check custom_components/qweather_pro/clients.py custom_components/qweather_pro/location.py tests
+          uv run pytest
 
       - name: Create ZIP file
         if: steps.check.outputs.compare_result == 'success'
@@ -40,7 +58,7 @@ jobs:
           cd custom_components/${{ steps.check.outputs.comp_name }}
           zip -r ../../${{ steps.check.outputs.comp_name }}.zip .
 
-      - name: Create GitHub Release Draft
+      - name: Create GitHub Release
         if: steps.check.outputs.compare_result == 'success'
         uses: softprops/action-gh-release@v3
         with:
@@ -49,7 +67,7 @@ jobs:
           name: v${{ steps.check.outputs.version }} - ${{ steps.check.outputs.commit_title }}
           files: |
             ${{ steps.check.outputs.comp_name }}.zip
-          draft: true
+          draft: false
           prerelease: ${{ steps.check.outputs.is_prerelease }}
           generate_release_notes: true
           target_commitish: ${{ github.sha }}
