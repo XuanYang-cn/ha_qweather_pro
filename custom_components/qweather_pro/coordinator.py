@@ -28,6 +28,7 @@ from .location import (
     quantize_location_input,
     verified_shanghai_location,
 )
+from .rain_guidance import daily_rain_guidance
 
 CORE_DATASETS = ("now", "daily", "hourly", "air")
 STATUS_DATASETS = (*CORE_DATASETS, "warning")
@@ -378,6 +379,8 @@ class QWeatherUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     parsed_air[code] = conc.get("value")
                     parsed_air[f"{code}_unit"] = conc.get("unit")
 
+        parsed_hourly = self._parse_hourly(hourly_list)
+        dataset_status = self._dataset_statuses(refresh_time)
         return {
             "now": {
                 "temp": self._to_f(now_raw.get("temp")),
@@ -398,7 +401,12 @@ class QWeatherUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 "dew": self._to_f(now_raw.get("dew")),
             },
             "daily": self._parse_daily(daily_list),
-            "hourly": self._parse_hourly(hourly_list),
+            "hourly": parsed_hourly,
+            "rain_guidance": daily_rain_guidance(
+                parsed_hourly,
+                dataset_status["hourly"],
+                refresh_time,
+            ),
             "aqi": parsed_air,
             "warning": parsed_warnings,
             "indices": self._parse_indices(indices_list),
@@ -406,7 +414,7 @@ class QWeatherUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             "minutely_summary": None,
             "minutely_detail": [],
             "weather_abstract": self._generate_smart_abstract(c, now_dt),
-            "dataset_status": self._dataset_statuses(refresh_time),
+            "dataset_status": dataset_status,
             "update_time": self._provider_time("now"),
         }
 

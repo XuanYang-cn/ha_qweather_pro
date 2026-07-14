@@ -192,11 +192,12 @@ async def test_full_config_entry_uses_programmable_offline_clients(
     assert entry.runtime_data.nationwide_warning_coordinator.data["dataset_status"][
         "state"
     ] == "unavailable"
-    assert len(entities) == 8
+    assert len(entities) == 9
     assert {entity.unique_id for entity in entities} == {
         f"{entry.entry_id}_aqi",
         f"{entry.entry_id}_today_temp_range",
         f"{entry.entry_id}_warning_info",
+        f"{entry.entry_id}_daily_rain_guidance",
         f"{entry.entry_id}_nationwide_warning_summary",
         f"{entry.entry_id}_nationwide_warning_details",
         f"{entry.entry_id}_precipitation_summary",
@@ -224,6 +225,11 @@ async def test_full_config_entry_uses_programmable_offline_clients(
         for entity in entities
         if entity.unique_id == f"{entry.entry_id}_nationwide_warning_details"
     )
+    rain_guidance = next(
+        entity
+        for entity in entities
+        if entity.unique_id == f"{entry.entry_id}_daily_rain_guidance"
+    )
     assert "custom_ui_more_info" not in weather.extra_state_attributes
     assert weather.extra_state_attributes["dataset_status"]["now"]["state"] == "fresh"
     assert aqi.extra_state_attributes["dataset_status"]["air"]["state"] == "fresh"
@@ -234,6 +240,8 @@ async def test_full_config_entry_uses_programmable_offline_clients(
     assert nationwide_details.native_value == 1
     assert nationwide_details.extra_state_attributes["transport"] == "entity_attribute"
     assert nationwide_details.extra_state_attributes["warnings"][0]["source"] == "China Weather"
+    assert rain_guidance.native_value == "unconfirmed"
+    assert rain_guidance.extra_state_attributes["hourly_status"]["state"] == "fresh"
     hass.config_entries.async_forward_entry_setups.assert_awaited_once_with(
         entry, PLATFORMS
     )

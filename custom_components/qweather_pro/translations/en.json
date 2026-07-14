@@ -168,6 +168,19 @@
         }
       },
 
+      "daily_rain_guidance": {
+        "name": "Today's Rain Guidance",
+        "state": {
+          "rain_expected": "Rain expected",
+          "no_rain_expected": "No rain expected",
+          "unconfirmed": "Rain unconfirmed"
+        },
+        "state_attributes": {
+          "window_end": { "name": "Shanghai-day window end" },
+          "hourly_status": { "name": "Hourly forecast status" }
+        }
+      },
+
       "nationwide_warning_summary": {
         "name": "Nationwide Weather Warning Summary",
         "state": {

@@ -168,6 +168,19 @@
         }
       },
 
+      "daily_rain_guidance": {
+        "name": "当日降雨提示",
+        "state": {
+          "rain_expected": "预计有雨",
+          "no_rain_expected": "预计无雨",
+          "unconfirmed": "无法确认"
+        },
+        "state_attributes": {
+          "window_end": { "name": "上海当天判断结束时间" },
+          "hourly_status": { "name": "小时预报状态" }
+        }
+      },
+
       "nationwide_warning_summary": {
         "name": "全国气象预警摘要",
         "state": {

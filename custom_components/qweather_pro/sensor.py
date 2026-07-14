@@ -80,6 +80,14 @@ def _warning_attributes(data: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _rain_guidance_attributes(data: dict[str, Any]) -> dict[str, Any]:
+    """Publish the source window and freshness for Node-RED to consume."""
+    return {
+        **data.get("rain_guidance", {}),
+        "hourly_status": data.get("dataset_status", {}).get("hourly", {}),
+    }
+
+
 SENSOR_DESCRIPTIONS: tuple[QWeatherSensorEntityDescription, ...] = (
     QWeatherSensorEntityDescription(
         key="aqi",
@@ -122,6 +130,13 @@ SENSOR_DESCRIPTIONS: tuple[QWeatherSensorEntityDescription, ...] = (
         icon="mdi:alert-decagram",
         value_fn=_warning_sensor_value,
         attr_fn=_warning_attributes,
+    ),
+    QWeatherSensorEntityDescription(
+        key="daily_rain_guidance",
+        translation_key="daily_rain_guidance",
+        icon="mdi:weather-rainy",
+        value_fn=lambda data: data.get("rain_guidance", {}).get("state", "unconfirmed"),
+        attr_fn=_rain_guidance_attributes,
     ),
     QWeatherSensorEntityDescription(
         key="precipitation_summary",
