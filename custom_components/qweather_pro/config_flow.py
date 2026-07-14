@@ -1,7 +1,7 @@
 """QWeather (和风天气) 配置流实现."""
 from __future__ import annotations
 
-import asyncio
+from collections.abc import Mapping
 from typing import Any
 
 import voluptuous as vol
@@ -9,13 +9,11 @@ from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import ed25519
 
 from homeassistant import config_entries
-from homeassistant.core import callback
 from homeassistant.const import CONF_HOST, CONF_API_KEY
-from homeassistant.helpers.aiohttp_client import async_get_clientsession
+from homeassistant.core import callback
 from homeassistant.data_entry_flow import FlowResult
 from homeassistant.helpers import selector
 
-from .api import QWeatherAPI
 from .clients import create_qweather_client
 from .const import (
     DOMAIN,
@@ -61,6 +59,14 @@ def first_version_auth_data(data: dict[str, Any]) -> dict[str, Any]:
     return normalized
 
 
+def first_version_reconfigure_data(
+    existing: Mapping[str, Any],
+    updates: dict[str, Any],
+) -> dict[str, Any]:
+    """Merge reconfiguration data before removing legacy API-key credentials."""
+    return first_version_auth_data({**existing, **updates})
+
+
 class QWeatherConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     """处理和风天气的配置流."""
 
@@ -92,10 +98,6 @@ class QWeatherConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             format=serialization.PublicFormat.SubjectPublicKeyInfo
         )
         return private_bytes.decode('utf-8'), public_bytes.decode('utf-8')
-
-    def _create_api(self, config_data: dict[str, Any]) -> QWeatherAPI:
-        """Create a client from Home Assistant's private config-entry data."""
-        return create_qweather_client(self.hass, config_data)
 
     async def async_step_user(self, user_input: dict[str, Any] | None = None) -> FlowResult:
         """入口步骤：决定是新建还是复用账号."""
@@ -218,7 +220,7 @@ class QWeatherConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             errors["base"] = "api_host_deprecated"
 
         if not errors:
-            api = self._create_api(config_data)
+            api = create_qweather_client(self.hass, config_data)
 
             try:
                 # 获取系统语言进行本地化搜索
@@ -323,7 +325,7 @@ class QWeatherConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         qweather_lang = LANGUAGE_MAP.get(self.hass.config.language, "en")
         try:
             normalized_coords = await async_quantize_and_verify_location(
-                self._create_api(self._temp_data),
+                create_qweather_client(self.hass, self._temp_data),
                 location_info,
                 language=qweather_lang,
             )
@@ -385,15 +387,12 @@ class QWeatherConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         })
 
     async def async_step_reconfigure(self, user_input: dict[str, Any] | None = None) -> FlowResult:
-        """重新配置逻辑：支持切换 Key 或 JWT."""
+        """重新配置仅支持 JWT/Ed25519 凭据."""
         entry = self._get_reconfigure_entry()
         
         if user_input is not None:
             # 合并旧数据与新输入
-            self._temp_data = {
-                **entry.data,
-                **first_version_auth_data(user_input),
-            }
+            self._temp_data = first_version_reconfigure_data(entry.data, user_input)
             return await self.async_step_jwt_setup()
 
         # 初始显示重新配置表单
