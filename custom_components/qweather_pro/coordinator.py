@@ -143,14 +143,6 @@ class QWeatherUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         provider_time = response.get("updateTime") or response.get("publishTime")
         if provider_time:
             return provider_time
-        if category == "warning":
-            alerts = response.get("alerts")
-            if isinstance(alerts, list):
-                for alert in alerts:
-                    if isinstance(alert, Mapping):
-                        issued = alert.get("issuedTime") or alert.get("pubTime")
-                        if issued:
-                            return issued
         return None
 
     def _provider_time(self, category: str) -> str | None:
@@ -436,7 +428,7 @@ class QWeatherUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         }
 
     @staticmethod
-    def _warning_identity(alert: Mapping[str, Any]) -> str:
+    def _warning_base_identity(alert: Mapping[str, Any]) -> str:
         """Prefer the provider ID and otherwise derive a deterministic identity."""
         provider_id = alert.get("id") or alert.get("warningId")
         if provider_id:
@@ -465,9 +457,32 @@ class QWeatherUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         return f"qweather-{hashlib.sha256(encoded.encode()).hexdigest()[:16]}"
 
     @classmethod
+    def _warning_identity(cls, alert: Mapping[str, Any]) -> str:
+        """Read the locally retained ID before falling back to provider fields."""
+        retained_identity = alert.get("_qweather_identity")
+        if retained_identity:
+            return str(retained_identity)
+        return cls._warning_base_identity(alert)
+
+    @staticmethod
+    def _warning_signature(alert: Mapping[str, Any]) -> str:
+        """Serialize a provider alert without leaking the local identity marker."""
+        return json.dumps(
+            {
+                key: value
+                for key, value in alert.items()
+                if key != "_qweather_identity"
+            },
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+            default=str,
+        )
+
+    @classmethod
     def _warning_identities(cls, alerts: list[Mapping[str, Any]]) -> list[str]:
         """Resolve rare fallback-ID collisions deterministically."""
-        base_ids = [cls._warning_identity(alert) for alert in alerts]
+        base_ids = [cls._warning_base_identity(alert) for alert in alerts]
         grouped_indexes: dict[str, list[int]] = {}
         for index, identity in enumerate(base_ids):
             grouped_indexes.setdefault(identity, []).append(index)
@@ -478,16 +493,130 @@ class QWeatherUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 continue
             ordered_indexes = sorted(
                 indexes,
-                key=lambda index: json.dumps(
-                    alerts[index],
-                    ensure_ascii=False,
-                    sort_keys=True,
-                    separators=(",", ":"),
-                    default=str,
-                ),
+                key=lambda index: cls._warning_signature(alerts[index]),
             )
             for position, index in enumerate(ordered_indexes, start=1):
                 identities[index] = f"{identity}-{position}"
+        return identities
+
+    @staticmethod
+    def _warning_match_score(
+        cached_alert: Mapping[str, Any],
+        incoming_alert: Mapping[str, Any],
+    ) -> int:
+        """Score mutable fields to retain a collision suffix across an update."""
+        field_aliases = (
+            ("headline", "title"),
+            ("description", "text"),
+            ("instruction", "defense"),
+            ("severity", "level"),
+            ("expireTime", "endTime", "expires"),
+        )
+        score = 0
+        for aliases in field_aliases:
+            cached_value = next(
+                (cached_alert.get(alias) for alias in aliases if cached_alert.get(alias)),
+                None,
+            )
+            incoming_value = next(
+                (
+                    incoming_alert.get(alias)
+                    for alias in aliases
+                    if incoming_alert.get(alias)
+                ),
+                None,
+            )
+            if cached_value is not None and cached_value == incoming_value:
+                score += 1
+        return score
+
+    def _incoming_warning_identities(
+        self,
+        cached_alerts: list[Mapping[str, Any]],
+        incoming_alerts: list[Mapping[str, Any]],
+    ) -> list[str]:
+        """Match colliding incoming alerts to the IDs retained in the snapshot."""
+        identities = ["" for _ in incoming_alerts]
+        cached_by_base: dict[str, list[tuple[str, Mapping[str, Any]]]] = {}
+        incoming_by_base: dict[str, list[int]] = {}
+        for alert in cached_alerts:
+            cached_by_base.setdefault(self._warning_base_identity(alert), []).append(
+                (self._warning_identity(alert), alert)
+            )
+        for index, alert in enumerate(incoming_alerts):
+            incoming_by_base.setdefault(self._warning_base_identity(alert), []).append(index)
+
+        for base_identity, indexes in incoming_by_base.items():
+            cached = sorted(
+                cached_by_base.get(base_identity, []),
+                key=lambda candidate: candidate[0],
+            )
+            if not cached:
+                for index, identity in zip(
+                    indexes,
+                    self._warning_identities(
+                        [incoming_alerts[index] for index in indexes]
+                    ),
+                    strict=True,
+                ):
+                    identities[index] = identity
+                continue
+
+            remaining_cached = list(cached)
+            remaining_indexes = list(indexes)
+            for index in indexes:
+                signature = self._warning_signature(incoming_alerts[index])
+                match = next(
+                    (
+                        candidate
+                        for candidate in remaining_cached
+                        if self._warning_signature(candidate[1]) == signature
+                    ),
+                    None,
+                )
+                if match is not None:
+                    identities[index] = match[0]
+                    remaining_cached.remove(match)
+                    remaining_indexes.remove(index)
+
+            while remaining_cached and remaining_indexes:
+                candidates = [
+                    (
+                        self._warning_match_score(cached_alert, incoming_alerts[index]),
+                        index,
+                        identity,
+                    )
+                    for identity, cached_alert in remaining_cached
+                    for index in remaining_indexes
+                ]
+                best_score = max(score for score, _, _ in candidates)
+                if best_score == 0 and len(remaining_cached) != len(remaining_indexes):
+                    break
+                _, index, identity = min(
+                    candidate
+                    for candidate in candidates
+                    if candidate[0] == best_score
+                )
+                identities[index] = identity
+                remaining_indexes.remove(index)
+                remaining_cached = [
+                    candidate
+                    for candidate in remaining_cached
+                    if candidate[0] != identity
+                ]
+
+            used_identities = {
+                identity for identity, _ in cached
+            } | {identities[index] for index in indexes if identities[index]}
+            for index in remaining_indexes:
+                identity = base_identity
+                suffix = 1
+                while identity in used_identities:
+                    identity = f"{base_identity}-{suffix}"
+                    suffix += 1
+                identities[index] = identity
+                used_identities.add(identity)
+
         return identities
 
     def _warning_is_active(
@@ -520,21 +649,31 @@ class QWeatherUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             return []
 
         cached = (
-            [alert for alert in cached_alerts if isinstance(alert, Mapping)]
+            [
+                alert
+                for alert in cached_alerts
+                if isinstance(alert, Mapping) and self._warning_is_active(alert, now)
+            ]
             if isinstance(cached_alerts, list)
             else []
         )
         incoming = [alert for alert in incoming_alerts if isinstance(alert, Mapping)]
         active_alerts: dict[str, dict[str, Any]] = {}
         order: list[str] = []
-        for alert, identity in zip(cached, self._warning_identities(cached), strict=True):
-            if self._warning_is_active(alert, now):
-                active_alerts[identity] = dict(alert)
-                order.append(identity)
+        for alert in cached:
+            identity = self._warning_identity(alert)
+            active_alerts[identity] = dict(alert)
+            order.append(identity)
 
-        for alert, identity in zip(incoming, self._warning_identities(incoming), strict=True):
+        for alert, identity in zip(
+            incoming,
+            self._incoming_warning_identities(cached, incoming),
+            strict=True,
+        ):
             if self._warning_is_active(alert, now):
-                active_alerts[identity] = dict(alert)
+                stored_alert = dict(alert)
+                stored_alert["_qweather_identity"] = identity
+                active_alerts[identity] = stored_alert
                 if identity not in order:
                     order.append(identity)
             else:
@@ -556,11 +695,8 @@ class QWeatherUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             if isinstance(alert, Mapping) and self._warning_is_active(alert, now)
         ]
         parsed: list[dict[str, Any]] = []
-        for alert, identity in zip(
-            active_alerts,
-            self._warning_identities(active_alerts),
-            strict=True,
-        ):
+        for alert in active_alerts:
+            identity = self._warning_identity(alert)
             event_type = alert.get("eventType")
             type_name = (
                 event_type.get("name") if isinstance(event_type, Mapping) else None
