@@ -306,6 +306,43 @@ async def test_all_core_endpoint_failures_without_snapshots_block_entry_setup(
         await integration.async_setup_entry(hass, _config_entry())
 
 
+async def test_all_core_failures_keep_each_existing_snapshot_stale(
+    hass,
+    monkeypatch,
+) -> None:
+    """A complete provider outage cannot turn cached data into a fresh update."""
+    qweather = FakeQWeatherClient()
+    clients = ProviderClients(
+        qweather=qweather,
+        nationwide_warnings=FakeNationwideWarningClient({}),
+    )
+    _patch_provider_clients(monkeypatch, clients)
+    entry = _config_entry()
+
+    assert await integration.async_setup_entry(hass, entry)
+    coordinator = entry.runtime_data
+    initial_status = coordinator.data["dataset_status"]
+    clock = MutableClock(
+        datetime.fromisoformat(initial_status["now"]["last_success_time"])
+    )
+    monkeypatch.setattr(coordinator, "_now", clock.now)
+    for category in ("now", "daily", "hourly", "air"):
+        qweather.responses[category] = asyncio.TimeoutError()
+    clock.advance(timedelta(minutes=60))
+
+    await coordinator.async_refresh()
+
+    statuses = coordinator.data["dataset_status"]
+    assert coordinator.data["now"]["temp"] == 24.0
+    for category in ("now", "daily", "hourly", "air"):
+        assert statuses[category]["state"] == "stale"
+        assert statuses[category]["last_update_result"] == "failed"
+        assert (
+            statuses[category]["last_success_time"]
+            == initial_status[category]["last_success_time"]
+        )
+
+
 async def test_missing_air_snapshot_is_unavailable_without_a_default_aqi(
     hass,
     monkeypatch,
