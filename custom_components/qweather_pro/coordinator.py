@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import json
 from collections.abc import Mapping
 from datetime import datetime, timedelta, timezone
 from typing import Any
@@ -28,6 +30,7 @@ from .location import (
 )
 
 CORE_DATASETS = ("now", "daily", "hourly", "air")
+STATUS_DATASETS = (*CORE_DATASETS, "warning")
 DATASET_INTERVALS = {
     "now": timedelta(minutes=10),
     "daily": timedelta(minutes=60),
@@ -132,8 +135,21 @@ class QWeatherUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 return indexes[0].get("pubTime") or indexes[0].get("updateTime")
         metadata = response.get("metadata")
         if isinstance(metadata, Mapping):
-            return metadata.get("updateTime") or metadata.get("publishTime")
-        return response.get("updateTime") or response.get("publishTime")
+            provider_time = metadata.get("updateTime") or metadata.get("publishTime")
+            if provider_time:
+                return provider_time
+        provider_time = response.get("updateTime") or response.get("publishTime")
+        if provider_time:
+            return provider_time
+        if category == "warning":
+            alerts = response.get("alerts")
+            if isinstance(alerts, list):
+                for alert in alerts:
+                    if isinstance(alert, Mapping):
+                        issued = alert.get("issuedTime") or alert.get("pubTime")
+                        if issued:
+                            return issued
+        return None
 
     def _provider_time(self, category: str) -> str | None:
         """Read a provider timestamp from the retained dataset snapshot."""
@@ -163,9 +179,9 @@ class QWeatherUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         return timedelta(0) <= source_age < DATASET_INTERVALS[category]
 
     def _dataset_statuses(self, now: datetime) -> dict[str, dict[str, str | None]]:
-        """Publish independent freshness and result state for each core dataset."""
+        """Publish independent freshness and result state for public datasets."""
         statuses: dict[str, dict[str, str | None]] = {}
-        for category in CORE_DATASETS:
+        for category in STATUS_DATASETS:
             last_success = self._last_success_times.get(category)
             result = self._last_update_results[category]
             provider_time = self._provider_time(category)
@@ -259,7 +275,7 @@ class QWeatherUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 provider_time = self._provider_time_from_response(category, response)
                 provider_timestamp = self._parse_provider_time(provider_time)
                 previous_provider_timestamp = self._latest_provider_times.get(category)
-                if category in CORE_DATASETS and (
+                if category in STATUS_DATASETS and (
                     provider_timestamp is None
                     or (
                         previous_provider_timestamp is not None
@@ -271,7 +287,7 @@ class QWeatherUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                         self._last_update_results[category] = "unavailable"
                     else:
                         self._last_update_results[category] = "unchanged"
-                elif category in CORE_DATASETS and not self._provider_time_is_current(
+                elif category in STATUS_DATASETS and not self._provider_time_is_current(
                     category,
                     provider_timestamp,
                     refresh_time,
@@ -304,20 +320,7 @@ class QWeatherUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         warning_raw = (c.get("warning") or {}).get("alerts", [])
         indices_list = (c.get("indices") or {}).get("daily", [])
 
-        # 预警深度解析
-        parsed_warnings = []
-        for a in warning_raw:
-            parsed_warnings.append({
-                "id": a.get("id"),
-                "sender": a.get("senderName"),
-                "issued": a.get("issuedTime"),
-                "title": a.get("headline"),
-                "text": a.get("description"),
-                "instruction": a.get("instruction"),
-                "level": a.get("severity"),
-                "color": a.get("color", {}).get("code"),
-                "type_name": a.get("eventType", {}).get("name"),
-            })
+        parsed_warnings = self._parse_local_warnings(warning_raw, refresh_time)
 
         # 针对 V1 空气质量的深度解析逻辑
         parsed_air: dict[str, Any] = {}
@@ -386,6 +389,82 @@ class QWeatherUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             "dataset_status": self._dataset_statuses(refresh_time),
             "update_time": self._provider_time("now"),
         }
+
+    @staticmethod
+    def _warning_identity(alert: Mapping[str, Any]) -> str:
+        """Prefer the provider ID and otherwise derive a deterministic identity."""
+        provider_id = alert.get("id") or alert.get("warningId")
+        if provider_id:
+            return str(provider_id)
+        event_type = alert.get("eventType")
+        type_name = event_type.get("name") if isinstance(event_type, Mapping) else None
+        identity_material = {
+            "sender": alert.get("senderName") or alert.get("sender"),
+            "type": type_name or alert.get("typeName") or alert.get("type"),
+            "issued": alert.get("issuedTime") or alert.get("pubTime"),
+        }
+        encoded = json.dumps(
+            identity_material,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        return f"qweather-{hashlib.sha256(encoded.encode()).hexdigest()[:16]}"
+
+    def _warning_is_active(
+        self,
+        alert: Mapping[str, Any],
+        now: datetime,
+    ) -> bool:
+        """Exclude only explicit cancellation or expiration from a success response."""
+        status = str(alert.get("status") or alert.get("warningStatus") or "active")
+        if status.casefold() in {"cancelled", "canceled", "cleared", "expired", "ended"}:
+            return False
+        expires = (
+            alert.get("expireTime")
+            or alert.get("endTime")
+            or alert.get("expires")
+        )
+        expires_at = self._parse_provider_time(expires)
+        return expires_at is None or expires_at > now
+
+    def _parse_local_warnings(
+        self,
+        alerts: object,
+        now: datetime,
+    ) -> list[dict[str, Any]]:
+        """Normalize every still-active provider warning without collapsing the list."""
+        if not isinstance(alerts, list):
+            return []
+        parsed: list[dict[str, Any]] = []
+        for alert in alerts:
+            if not isinstance(alert, Mapping) or not self._warning_is_active(alert, now):
+                continue
+            event_type = alert.get("eventType")
+            type_name = (
+                event_type.get("name") if isinstance(event_type, Mapping) else None
+            ) or alert.get("typeName") or alert.get("type")
+            severity = alert.get("severity") or alert.get("level")
+            color = alert.get("color")
+            parsed.append(
+                {
+                    "id": self._warning_identity(alert),
+                    "type": type_name,
+                    "severity": severity,
+                    "title": alert.get("headline") or alert.get("title"),
+                    "text": alert.get("description") or alert.get("text"),
+                    "instruction": alert.get("instruction") or alert.get("defense"),
+                    "sender": alert.get("senderName") or alert.get("sender"),
+                    "issued": alert.get("issuedTime") or alert.get("pubTime"),
+                    "effective": alert.get("effectiveTime") or alert.get("startTime"),
+                    "expires": alert.get("expireTime") or alert.get("endTime"),
+                    "source": "QWeather",
+                    "level": severity,
+                    "color": color.get("code") if isinstance(color, Mapping) else color,
+                    "type_name": type_name,
+                }
+            )
+        return parsed
 
     def _generate_smart_abstract(self, c: dict, now_dt: datetime) -> dict[str, Any]:
         """全天候智能语义引擎 - 国际化逻辑版"""

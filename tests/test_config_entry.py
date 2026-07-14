@@ -62,6 +62,30 @@ def _advance_provider_timestamps(
         qweather.responses["air"]["indexes"][0]["pubTime"] = timestamp
 
 
+def _warning(
+    warning_id: str,
+    *,
+    headline: str = "Synthetic rain warning",
+    severity: str = "moderate",
+    status: str = "active",
+    expire_time: str = "2026-07-14T09:00+08:00",
+) -> dict[str, object]:
+    """Create a synthetic active Shanghai QWeather warning response item."""
+    return {
+        "id": warning_id,
+        "eventType": {"name": "暴雨"},
+        "severity": severity,
+        "headline": headline,
+        "description": f"{headline} details",
+        "instruction": "Stay indoors",
+        "senderName": "Shanghai Meteorological Service",
+        "issuedTime": "2026-07-14T08:00+08:00",
+        "effectiveTime": "2026-07-14T08:00+08:00",
+        "expireTime": expire_time,
+        "status": status,
+    }
+
+
 def _config_entry() -> ConfigEntry:
     return ConfigEntry(
         data={
@@ -514,6 +538,262 @@ async def test_current_weather_is_not_requested_before_its_10_minute_due_time(
     await coordinator.async_refresh()
 
     assert qweather.calls.count("now") == 1
+
+
+async def test_local_warning_contract_preserves_all_active_warning_fields(
+    hass,
+    monkeypatch,
+) -> None:
+    """One successful response keeps every active Shanghai warning separately."""
+    qweather = FakeQWeatherClient()
+    qweather.responses["warning"]["alerts"] = [
+        _warning("rain-1"),
+        _warning("wind-2", headline="Synthetic wind warning", severity="severe"),
+    ]
+    _patch_provider_clients(
+        monkeypatch,
+        ProviderClients(
+            qweather=qweather,
+            nationwide_warnings=FakeNationwideWarningClient({}),
+        ),
+    )
+    entry = _config_entry()
+
+    assert await integration.async_setup_entry(hass, entry)
+
+    warnings = entry.runtime_data.data["warning"]
+    assert [warning["id"] for warning in warnings] == ["rain-1", "wind-2"]
+    assert {key: warnings[0][key] for key in (
+        "id",
+        "type",
+        "severity",
+        "title",
+        "text",
+        "instruction",
+        "sender",
+        "issued",
+        "effective",
+        "expires",
+        "source",
+    )} == {
+        "id": "rain-1",
+        "type": "暴雨",
+        "severity": "moderate",
+        "title": "Synthetic rain warning",
+        "text": "Synthetic rain warning details",
+        "instruction": "Stay indoors",
+        "sender": "Shanghai Meteorological Service",
+        "issued": "2026-07-14T08:00+08:00",
+        "effective": "2026-07-14T08:00+08:00",
+        "expires": "2026-07-14T09:00+08:00",
+        "source": "QWeather",
+    }
+    assert entry.runtime_data.data["dataset_status"]["warning"] == {
+        "provider_time": "2026-07-14T08:00+08:00",
+        "last_success_time": "2026-07-14T00:00:00+00:00",
+        "last_update_result": "success",
+        "state": "fresh",
+    }
+
+
+async def test_warning_failure_without_snapshot_is_unconfirmed(
+    hass,
+    monkeypatch,
+) -> None:
+    """An initial provider failure is not the same as a confirmed empty list."""
+    qweather = FakeQWeatherClient()
+    qweather.responses["warning"] = {"code": "429"}
+    _patch_provider_clients(
+        monkeypatch,
+        ProviderClients(
+            qweather=qweather,
+            nationwide_warnings=FakeNationwideWarningClient({}),
+        ),
+    )
+    entry = _config_entry()
+
+    assert await integration.async_setup_entry(hass, entry)
+
+    assert entry.runtime_data.data["warning"] == []
+    assert entry.runtime_data.data["dataset_status"]["warning"] == {
+        "provider_time": None,
+        "last_success_time": None,
+        "last_update_result": "failed",
+        "state": "unavailable",
+    }
+
+
+async def test_warning_failure_retains_snapshot_until_successful_clear(
+    hass,
+    monkeypatch,
+) -> None:
+    """A provider error cannot silently remove an otherwise active warning."""
+    qweather = FakeQWeatherClient()
+    qweather.responses["warning"]["alerts"] = [_warning("rain-1")]
+    _patch_provider_clients(
+        monkeypatch,
+        ProviderClients(
+            qweather=qweather,
+            nationwide_warnings=FakeNationwideWarningClient({}),
+        ),
+    )
+    entry = _config_entry()
+
+    assert await integration.async_setup_entry(hass, entry)
+    coordinator = entry.runtime_data
+    initial_success = coordinator.data["dataset_status"]["warning"]["last_success_time"]
+    clock = MutableClock(datetime.fromisoformat(initial_success))
+    monkeypatch.setattr(coordinator, "_now", clock.now)
+    qweather.responses["warning"] = {"code": "401"}
+    clock.advance(timedelta(minutes=30))
+
+    await coordinator.async_refresh()
+
+    assert [warning["id"] for warning in coordinator.data["warning"]] == ["rain-1"]
+    assert coordinator.data["dataset_status"]["warning"] == {
+        "provider_time": "2026-07-14T08:00+08:00",
+        "last_success_time": initial_success,
+        "last_update_result": "failed",
+        "state": "stale",
+    }
+
+
+async def test_warning_successful_empty_and_expired_items_clear_active_state(
+    hass,
+    monkeypatch,
+) -> None:
+    """Only a success-empty response or explicit expiry clears active warnings."""
+    qweather = FakeQWeatherClient()
+    qweather.responses["warning"]["alerts"] = [_warning("rain-1")]
+    _patch_provider_clients(
+        monkeypatch,
+        ProviderClients(
+            qweather=qweather,
+            nationwide_warnings=FakeNationwideWarningClient({}),
+        ),
+    )
+    entry = _config_entry()
+
+    assert await integration.async_setup_entry(hass, entry)
+    coordinator = entry.runtime_data
+    initial_success = coordinator.data["dataset_status"]["warning"]["last_success_time"]
+    clock = MutableClock(datetime.fromisoformat(initial_success))
+    monkeypatch.setattr(coordinator, "_now", clock.now)
+    qweather.responses["warning"] = {
+        "metadata": {"updateTime": "2026-07-14T08:30+08:00"},
+        "alerts": [],
+    }
+    clock.advance(timedelta(minutes=30))
+
+    await coordinator.async_refresh()
+
+    assert coordinator.data["warning"] == []
+    assert coordinator.data["dataset_status"]["warning"]["state"] == "fresh"
+
+    qweather.responses["warning"] = {
+        "metadata": {"updateTime": "2026-07-14T09:00+08:00"},
+        "alerts": [
+            _warning(
+                "expired-1",
+                expire_time="2026-07-14T09:00+08:00",
+            )
+        ],
+    }
+    clock.advance(timedelta(minutes=30))
+    await coordinator.async_refresh()
+
+    assert coordinator.data["warning"] == []
+
+
+async def test_warning_lifecycle_preserves_identity_across_updates_and_recovery(
+    hass,
+    monkeypatch,
+) -> None:
+    """New, revised, upgraded, downgraded, and recovered warnings stay distinct."""
+    qweather = FakeQWeatherClient()
+    initial_warning = _warning("rain-1")
+    initial_warning.pop("id")
+    qweather.responses["warning"]["alerts"] = [initial_warning]
+    _patch_provider_clients(
+        monkeypatch,
+        ProviderClients(
+            qweather=qweather,
+            nationwide_warnings=FakeNationwideWarningClient({}),
+        ),
+    )
+    entry = _config_entry()
+
+    assert await integration.async_setup_entry(hass, entry)
+    coordinator = entry.runtime_data
+    fallback_id = coordinator.data["warning"][0]["id"]
+    clock = MutableClock(datetime(2026, 7, 14, tzinfo=timezone.utc))
+    monkeypatch.setattr(coordinator, "_now", clock.now)
+
+    qweather.responses["warning"] = {"code": "429"}
+    clock.advance(timedelta(minutes=30))
+    await coordinator.async_refresh()
+    assert coordinator.data["warning"][0]["id"] == fallback_id
+    assert coordinator.data["dataset_status"]["warning"]["state"] == "stale"
+
+    revised_warning = _warning(
+        "ignored",
+        headline="Synthetic rain warning revised",
+        severity="moderate",
+        expire_time="2026-07-14T12:00+08:00",
+    )
+    revised_warning.pop("id")
+    qweather.responses["warning"] = {
+        "metadata": {"updateTime": "2026-07-14T09:00+08:00"},
+        "alerts": [
+            revised_warning,
+            _warning(
+                "wind-2",
+                severity="severe",
+                expire_time="2026-07-14T12:00+08:00",
+            ),
+        ],
+    }
+    clock.advance(timedelta(minutes=30))
+    await coordinator.async_refresh()
+    warnings = {warning["id"]: warning for warning in coordinator.data["warning"]}
+    assert warnings[fallback_id]["title"] == "Synthetic rain warning revised"
+    assert warnings[fallback_id]["severity"] == "moderate"
+    assert warnings["wind-2"]["severity"] == "severe"
+    assert coordinator.data["dataset_status"]["warning"]["state"] == "fresh"
+
+    qweather.responses["warning"] = {
+        "metadata": {"updateTime": "2026-07-14T09:30+08:00"},
+        "alerts": [
+            _warning(
+                "ignored",
+                headline="Synthetic rain warning revised",
+                severity="severe",
+                expire_time="2026-07-14T12:00+08:00",
+            )
+        ],
+    }
+    qweather.responses["warning"]["alerts"][0].pop("id")
+    clock.advance(timedelta(minutes=30))
+    await coordinator.async_refresh()
+    assert coordinator.data["warning"][0]["id"] == fallback_id
+    assert coordinator.data["warning"][0]["severity"] == "severe"
+
+    qweather.responses["warning"] = {
+        "metadata": {"updateTime": "2026-07-14T10:00+08:00"},
+        "alerts": [
+            _warning(
+                "ignored",
+                headline="Synthetic rain warning revised",
+                severity="minor",
+                expire_time="2026-07-14T12:00+08:00",
+            )
+        ],
+    }
+    qweather.responses["warning"]["alerts"][0].pop("id")
+    clock.advance(timedelta(minutes=30))
+    await coordinator.async_refresh()
+    assert coordinator.data["warning"][0]["id"] == fallback_id
+    assert coordinator.data["warning"][0]["severity"] == "minor"
 
 
 async def test_refresh_schedule_uses_fixed_10_and_60_minute_contract(

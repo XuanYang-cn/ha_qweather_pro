@@ -129,7 +129,8 @@
       "warning_info": {
         "name": "Weather Warnings",
         "state": {
-          "without_warning": "Without warning"
+          "without_warning": "Without warning",
+          "warning_unconfirmed": "Warnings unconfirmed"
         },
         "state_attributes": {
           "id": { "name": "Warning ID" },

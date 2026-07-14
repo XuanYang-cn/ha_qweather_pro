@@ -55,6 +55,30 @@ def _today_temperature_attributes(data: dict[str, Any]) -> dict[str, str | None]
     }
 
 
+def _warning_sensor_value(data: dict[str, Any]) -> str | None:
+    """Distinguish a confirmed clear list from warnings that cannot be confirmed."""
+    warnings = data.get("warning", [])
+    status = data.get("dataset_status", {}).get("warning", {})
+    if status.get("state") in {"unavailable", "stale"} and not warnings:
+        return "warning_unconfirmed"
+    if warnings:
+        return warnings[0].get("title")
+    return "without_warning"
+
+
+def _warning_attributes(data: dict[str, Any]) -> dict[str, Any]:
+    """Keep the legacy first-warning fields while publishing the complete list."""
+    warnings = data.get("warning", [])
+    status = data.get("dataset_status", {}).get("warning", {})
+    if not warnings:
+        return {"warnings": [], "warning_status": status}
+    return {
+        **warnings[0],
+        "warnings": warnings,
+        "warning_status": status,
+    }
+
+
 SENSOR_DESCRIPTIONS: tuple[QWeatherSensorEntityDescription, ...] = (
     QWeatherSensorEntityDescription(
         key="aqi",
@@ -95,10 +119,8 @@ SENSOR_DESCRIPTIONS: tuple[QWeatherSensorEntityDescription, ...] = (
         key="warning_info",
         translation_key="warning_info",
         icon="mdi:alert-decagram",
-        value_fn=lambda data: data.get("warning", [{}])[0].get("title", "without_warning") if data.get("warning") else "without_warning",
-        attr_fn=lambda data: (
-            data.get("warning")[0] if data.get("warning") and len(data.get("warning")) > 0 else {}
-        ),
+        value_fn=_warning_sensor_value,
+        attr_fn=_warning_attributes,
     ),
     QWeatherSensorEntityDescription(
         key="precipitation_summary",

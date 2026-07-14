@@ -129,7 +129,8 @@
       "warning_info": {
         "name": "气象预警",
         "state": {
-          "without_warning": "无预警"
+          "without_warning": "无预警",
+          "warning_unconfirmed": "预警无法确认"
         },
         "state_attributes": {
           "id": { "name": "预警 ID" },
