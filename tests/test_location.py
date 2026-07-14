@@ -6,6 +6,7 @@ from custom_components.qweather_pro.location import (
     QuantizedLocationMismatch,
     async_quantize_and_verify_location,
     quantize_coordinates,
+    quantize_location_input,
 )
 
 
@@ -32,6 +33,11 @@ class FakeLookupClient:
 
 def test_coordinates_are_quantized_to_an_approximately_five_kilometre_grid() -> None:
     assert quantize_coordinates("121.4737", "31.2304") == "121.45,31.25"
+
+
+def test_coordinate_input_is_quantized_before_lookup_but_city_names_are_preserved() -> None:
+    assert quantize_location_input("121.4737, 31.2304") == "121.45,31.25"
+    assert quantize_location_input("上海市") == "上海市"
 
 
 async def test_quantized_point_must_remain_in_the_same_warning_jurisdiction() -> None:

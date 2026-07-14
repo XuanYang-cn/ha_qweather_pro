@@ -33,7 +33,12 @@ from .const import (
     LANGUAGE_MAP,
     LOGGER,
 )
-from .location import QuantizedLocationMismatch, async_quantize_and_verify_location
+from .location import (
+    QuantizedLocationMismatch,
+    async_quantize_and_verify_location,
+    quantize_coordinates,
+    quantize_location_input,
+)
 
 
 def first_version_options(options: dict[str, Any]) -> dict[str, Any]:
@@ -134,7 +139,10 @@ class QWeatherConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 return await self.async_step_jwt_setup()
             return await self._async_search_location(self._temp_data)
 
-        default_location = f"{round(self.hass.config.longitude, 2)},{round(self.hass.config.latitude, 2)}"
+        default_location = quantize_coordinates(
+            self.hass.config.longitude,
+            self.hass.config.latitude,
+        )
         return self.async_show_form(
             step_id="setup",
             data_schema=vol.Schema({
@@ -201,7 +209,7 @@ class QWeatherConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         """核心搜索逻辑：验证 Host 并抓取城市候选项."""
         errors: dict[str, str] = {}
         user_host = config_data[CONF_HOST].strip()
-        raw_loc = config_data[CONF_LOCATION_ID].strip()
+        raw_loc = quantize_location_input(config_data[CONF_LOCATION_ID])
 
         # 检查过期域名
         deprecated_domains = ["api.qweather.com", "devapi.qweather.com", "geoapi.qweather.com"]

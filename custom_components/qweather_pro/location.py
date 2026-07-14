@@ -37,6 +37,17 @@ def quantize_coordinates(lon: str | float, lat: str | float) -> str:
     return f"{_quantize_coordinate(lon)},{_quantize_coordinate(lat)}"
 
 
+def quantize_location_input(location: str) -> str:
+    """Quantize coordinate input before lookup and preserve city names or IDs."""
+    parts = [part.strip() for part in location.split(",")]
+    if len(parts) != 2:
+        return location.strip()
+    try:
+        return quantize_coordinates(parts[0], parts[1])
+    except ValueError:
+        return location.strip()
+
+
 def _warning_jurisdiction(location: dict[str, Any]) -> tuple[Any, Any, Any]:
     return location.get("country"), location.get("adm1"), location.get("adm2")
 
