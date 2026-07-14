@@ -9,7 +9,7 @@
 > `9232254cf7dd56c72aefb23b425a4dd29bab1f4e`; see
 > [docs/MAINTENANCE.md](docs/MAINTENANCE.md) before installing or upgrading.
 
-[![Release](https://img.shields.io/github/v/release/XuanYang-cn/ha_qweather_pro)](https://github.com/XuanYang-cn/ha_qweather_pro/releases)
+[![Release](https://img.shields.io/github/v/release/XuanYang-cn/ha_qweather_pro)](https://github.com/XuanYang-cn/ha_qweather_pro/releases/latest)
 [![License](https://img.shields.io/badge/License-MIT-yellow.svg)](https://github.com/XuanYang-cn/ha_qweather_pro/blob/main/LICENSE)
 [![HACS Custom](https://img.shields.io/badge/HACS-Custom-orange.svg)](https://github.com/hacs/integration)
 ![](https://komarev.com/ghpvc/?username=XuanYang-cn&color=ff69b4)
@@ -19,6 +19,8 @@
 This personal fork focuses on trustworthy provider data and stable Home Assistant
 entities. Dashboard and detail UI are owned by the separate Home Assistant
 operations repository rather than auto-registered by this integration.
+Its first version is limited to one Shanghai household; setup verifies that the
+privacy-quantized location remains in the Shanghai warning jurisdiction.
 
 ## ✨ Core Features
 
@@ -40,39 +42,36 @@ operations repository rather than auto-registered by this integration.
   - Repository-owned Lovelace UI consumes the integration entities instead.
 
 - 🔄 **Latest Standards**  
-  - Fully compatible with HA 2024.3+ WebSocket forecast subscription for long-term smooth operation.
+  - Compatible with Home Assistant 2026.3+ and its WebSocket forecast subscription.
 
-## 🌍 Internationalization & Multi-language Support (i18n)
+## 🌏 Shanghai scope and localization
 
-QWeather Pro  internationalized, providing a seamless localized experience for users worldwide.
+This initial personal fork is not a worldwide integration. It supports the
+verified Shanghai location configured for this household and shows provider data
+in Home Assistant's selected language where QWeather supplies it.
 
-- **Automatic Language Sync**: The integration automatically detects your Home Assistant system language (Settings -> System -> General) and requests weather data in the matching language (supporting 30+ languages).
-- **Smart Fallback Mechanism**:
-  - **Core Weather/Alerts/AQI**: Supports all 30+ languages provided by QWeather API (e.g., German, French, Japanese, etc.).
-  - **Life Indices**: Fall back to English when the provider does not support the Home Assistant language. The first fork version does not call minute precipitation.
-- **Localized Titles & IDs**: During the setup flow, the integration fetches and locks the city name based on your current language (e.g., "BeiJing" in Chinese or "BeiJing" in English), generating clean, localized Entity IDs.
+- **Automatic language sync**: The integration requests data in Home Assistant's
+  configured language where the provider supports it.
+- **Localized title**: During setup, the verified Shanghai location name becomes
+  the config-entry title.
 
 ## 📦 Installation
 
 ### Install via HACS (Recommended)
 
-1. In HACS → “Integrations”, click the three-dot menu.
-2. Select **“Custom repositories”**.
-3. Enter:
+1. HACS installs only tagged releases; the current candidate is the [latest tagged release](https://github.com/XuanYang-cn/ha_qweather_pro/releases/latest).
+2. In HACS → “Integrations”, click the three-dot menu.
+3. Select **“Custom repositories”**.
+4. Enter the repository address HACS uses to discover its tagged releases:
 ```yaml
 https://github.com/XuanYang-cn/ha_qweather_pro
 ```
-4. Choose category **Integration**.
-5. Click **Add**.
-6. Find **QWeather Pro** in HACS and install it.
-7. Restart Home Assistant.
+5. Choose category **Integration**.
+6. Click **Add**, install **QWeather Pro** from HACS, and restart Home Assistant.
 
 ### Manual Installation
 
-1. Download the latest release:  
-```yaml
-https://github.com/XuanYang-cn/ha_qweather_pro
-```
+1. Download the [latest tagged release](https://github.com/XuanYang-cn/ha_qweather_pro/releases/latest).
 2. Extract and place `custom_components/qweather_pro` into your Home Assistant `custom_components` directory.
 3. Restart Home Assistant.
 
