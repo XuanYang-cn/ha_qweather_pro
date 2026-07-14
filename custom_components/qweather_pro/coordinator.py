@@ -172,7 +172,10 @@ class QWeatherUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 await self.nationwide_warning_api.async_fetch_active_warnings()
             )
         except Exception as err:
-            LOGGER.debug("China Weather nationwide warning baseline failed: %s", err)
+            LOGGER.debug(
+                "China Weather nationwide warning baseline failed (%s)",
+                type(err).__name__,
+            )
             nationwide_warnings = {
                 "source": "China Weather",
                 "status": "unavailable",
@@ -191,7 +194,11 @@ class QWeatherUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     self._last_update_times[category] = now_ts
                     success_any = True
                 elif isinstance(res, Exception):
-                    LOGGER.debug("和风天气：端点 %s 刷新异常: %s", category, res)
+                    LOGGER.debug(
+                        "QWeather endpoint %s refresh failed (%s)",
+                        category,
+                        type(res).__name__,
+                    )
 
             if success_any:
                 if self._consecutive_failures > 0:
@@ -201,7 +208,7 @@ class QWeatherUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             else:
                 raise UpdateFailed("所有 API 抓取任务均失败")
 
-        except Exception as err:
+        except Exception:
             self._consecutive_failures += 1
             # 冷启动保护逻辑
             if self._cache_data.get("now") and self._consecutive_failures >= 2:

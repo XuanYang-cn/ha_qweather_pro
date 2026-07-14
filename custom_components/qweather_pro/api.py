@@ -10,7 +10,7 @@ from aiohttp import ClientSession
 from cryptography.hazmat.primitives import serialization
 from tenacity import retry, stop_after_attempt, wait_exponential
 
-from .const import DOMAIN, LOGGER
+from .const import LOGGER
 
 
 def _log_retry_exhaustion(retry_state) -> None:
@@ -73,7 +73,7 @@ class QWeatherAPI:
                 headers=headers
             )
         except Exception as err:
-            LOGGER.error("QWeather JWT 签名生成失败: %s", err)
+            LOGGER.error("QWeather JWT signing failed (%s)", type(err).__name__)
             return None
 
     @retry(
@@ -105,7 +105,8 @@ class QWeatherAPI:
 
         if self.use_token:
             token = self._generate_jwt()
-            if token: headers["Authorization"] = f"Bearer {token}"
+            if token:
+                headers["Authorization"] = f"Bearer {token}"
         else:
             headers["X-QW-Api-Key"] = self.api_key
 

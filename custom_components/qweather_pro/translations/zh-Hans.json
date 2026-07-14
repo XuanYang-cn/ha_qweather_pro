@@ -41,12 +41,10 @@
       },
       "reconfigure": {
         "title": "重新配置认证信息",
-        "description": "您的集成可能因为认证失效而停止工作，请在此更新您的 API Host 或密钥。",
+        "description": "请在此更新 API Host 或地理位置；下一步需填写新的 JWT/Ed25519 凭据的项目 ID 与凭据 ID。",
         "data": {
           "host": "API Host",
-          "location_id": "地理位置",
-          "use_token": "使用 JWT 认证",
-          "api_key": "API 密钥 (Key)"
+          "location_id": "地理位置"
         }
       }
     },  
