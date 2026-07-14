@@ -72,7 +72,8 @@
     },
     "abort": {
       "already_configured": "该地理位置已被配置",
-      "reconfigure_successful": "配置已成功更新！"
+      "reconfigure_successful": "配置已成功更新！",
+      "quantized_location_mismatch": "隐私量化后的坐标不在所选气象预警辖区内，请选择其他位置。"
     }
   },
   "selector": {
@@ -86,13 +87,11 @@
     "step": {
       "init": {
         "title": "配置选项",
-        "description": "### 使用说明\r\n- 每日天气预报可选择 **3d/7d/15d/30d** 天，格点逐日预报只能选择 **3d/7d** 天。 \r\n- 逐小时预报可选择 **24h/72h/168h** 小时，格点逐小时预报只能选择 **24h/72h** 小时。\r\n- **格点天气**：开启高精度格点 API 后,部分实测数据（如**能见度**）将无法提供,卡片中将显示为 `--`。",
+        "description": "可调整每日与逐小时预报范围。个人 fork 第一版固定使用标准城市天气，并关闭格点天气和上游自定义 UI。",
         "data": {
           "update_interval": "数据更新频率 (分钟)",
           "dailysteps": "逐日预报天数 (3-30)",
-          "hourlysteps": "逐小时预报小时数 (24-168)",
-          "gird": "使用高精度格点天气 (V7 Gird API)",
-          "custom_ui": "启用自定义前端 UI 支持"
+          "hourlysteps": "逐小时预报小时数 (24-168)"
         }
       }
     }

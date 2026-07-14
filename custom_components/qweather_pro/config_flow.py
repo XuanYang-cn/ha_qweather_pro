@@ -33,6 +33,17 @@ from .const import (
     LANGUAGE_MAP,
     LOGGER,
 )
+from .location import QuantizedLocationMismatch, async_quantize_and_verify_location
+
+
+def first_version_options(options: dict[str, Any]) -> dict[str, Any]:
+    """Force the first fork version onto its supported data and UI modes."""
+    return {
+        **options,
+        CONF_GIRD: False,
+        CONF_CUSTOM_UI: False,
+    }
+
 
 class QWeatherConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     """处理和风天气的配置流."""
@@ -65,6 +76,18 @@ class QWeatherConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             format=serialization.PublicFormat.SubjectPublicKeyInfo
         )
         return private_bytes.decode('utf-8'), public_bytes.decode('utf-8')
+
+    def _create_api(self, config_data: dict[str, Any]) -> QWeatherAPI:
+        """Create a client from Home Assistant's private config-entry data."""
+        return QWeatherAPI(
+            session=async_get_clientsession(self.hass),
+            api_key=config_data.get(CONF_API_KEY),
+            use_token=config_data.get(CONF_USE_TOKEN),
+            project_id=config_data.get(CONF_PROJECT_ID),
+            key_id=config_data.get(CONF_KEY_ID),
+            private_key=config_data.get(CONF_PRIVATE_KEY),
+            host=config_data[CONF_HOST].strip(),
+        )
 
     async def async_step_user(self, user_input: dict[str, Any] | None = None) -> FlowResult:
         """入口步骤：决定是新建还是复用账号."""
@@ -177,8 +200,6 @@ class QWeatherConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     async def _async_search_location(self, config_data: dict[str, Any]) -> FlowResult:
         """核心搜索逻辑：验证 Host 并抓取城市候选项."""
         errors: dict[str, str] = {}
-        session = async_get_clientsession(self.hass)
-        
         user_host = config_data[CONF_HOST].strip()
         raw_loc = config_data[CONF_LOCATION_ID].strip()
 
@@ -188,15 +209,7 @@ class QWeatherConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             errors["base"] = "api_host_deprecated"
 
         if not errors:
-            api = QWeatherAPI(
-                session=session,
-                api_key=config_data.get(CONF_API_KEY),
-                use_token=config_data.get(CONF_USE_TOKEN),
-                project_id=config_data.get(CONF_PROJECT_ID),
-                key_id=config_data.get(CONF_KEY_ID),
-                private_key=config_data.get(CONF_PRIVATE_KEY),
-                host=user_host
-            )
+            api = self._create_api(config_data)
 
             try:
                 # 获取系统语言进行本地化搜索
@@ -241,7 +254,10 @@ class QWeatherConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     errors["base"] = "cannot_connect"
                     
             except Exception as err:
-                LOGGER.error("无法连接至 API Host %s: %s", user_host, err)
+                LOGGER.error(
+                    "Unable to validate the configured QWeather API host (%s)",
+                    type(err).__name__,
+                )
                 errors["base"] = "cannot_connect"
 
         # 确定出错时应该回退到哪个步骤
@@ -295,11 +311,18 @@ class QWeatherConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
     async def _async_verify_and_create(self, location_info: dict[str, Any]) -> FlowResult:
         """实现地理数据标准化，锁定物理 ID 并创建条目."""
-        
-        # 提取标准化高精度坐标 (Lon,Lat)
-        std_lon = round(float(location_info["lon"]), 2)
-        std_lat = round(float(location_info["lat"]), 2)
-        normalized_coords = f"{std_lon},{std_lat}"
+        qweather_lang = LANGUAGE_MAP.get(self.hass.config.language, "en")
+        try:
+            normalized_coords = await async_quantize_and_verify_location(
+                self._create_api(self._temp_data),
+                location_info,
+                language=qweather_lang,
+            )
+        except QuantizedLocationMismatch:
+            LOGGER.warning(
+                "QWeather quantized location left the selected warning jurisdiction"
+            )
+            return self.async_abort(reason="quantized_location_mismatch")
         
         # 新临时数据
         self._temp_data[CONF_LOCATION_ID] = normalized_coords
@@ -318,13 +341,13 @@ class QWeatherConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         return self.async_create_entry(
             title=city_title, 
             data=self._temp_data,
-            options={
-                CONF_UPDATE_INTERVAL: DEFAULT_UPDATE_INTERVAL,
-                CONF_DAILYSTEPS: "7",
-                CONF_HOURLYSTEPS: "24",
-                CONF_GIRD: False,
-                CONF_CUSTOM_UI: False,
-            }
+            options=first_version_options(
+                {
+                    CONF_UPDATE_INTERVAL: DEFAULT_UPDATE_INTERVAL,
+                    CONF_DAILYSTEPS: "7",
+                    CONF_HOURLYSTEPS: "24",
+                }
+            )
         )
 
     def _get_schema(self, data: dict) -> vol.Schema:
@@ -386,7 +409,10 @@ class QWeatherOptionsFlow(config_entries.OptionsFlow):
     async def async_step_init(self, user_input: dict[str, Any] | None = None) -> FlowResult:
         """选项配置主界面."""
         if user_input is not None:
-            return self.async_create_entry(title="", data=user_input)
+            return self.async_create_entry(
+                title="",
+                data=first_version_options(user_input),
+            )
 
         options = self.config_entry.options
 
@@ -417,7 +443,5 @@ class QWeatherOptionsFlow(config_entries.OptionsFlow):
                         mode=selector.SelectSelectorMode.DROPDOWN
                     )
                 ),
-                vol.Required(CONF_GIRD, default=options.get(CONF_GIRD, False)): selector.BooleanSelector(),
-                vol.Required(CONF_CUSTOM_UI, default=options.get(CONF_CUSTOM_UI, False)): selector.BooleanSelector(),
             }),
         )

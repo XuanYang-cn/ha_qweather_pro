@@ -72,7 +72,8 @@
     },
     "abort": {
       "already_configured": "This location has already been configured",
-      "reconfigure_successful": "Configuration updated successfully!"
+      "reconfigure_successful": "Configuration updated successfully!",
+      "quantized_location_mismatch": "The privacy-quantized point is outside the selected weather-warning jurisdiction. Choose a different location."
     }
   }, 
   "selector": {
@@ -86,13 +87,11 @@
     "step": {
       "init": {
         "title": "Integration Options",
-        "description": "### Instructions for Use\r\nThe daily weather forecast can be set to **3d/7d/15d/30d** days, while the grid-based daily forecast only supports **3d/7d** days.\r\n- The hourly forecast can be set to **24h/72h/168h** hours, while the grid-based hourly forecast only supports **24h/72h** hours.\r\n- **Grid Weather**: After enabling the high-precision grid API, some observed data (such as **visibility**) will no longer be available and will appear as `--` in the card.",
+        "description": "Adjust the daily and hourly forecast ranges. This fork always uses standard city weather; grid weather and the upstream custom UI are disabled.",
         "data": {
           "update_interval": "Update Interval (minutes)",
           "dailysteps": "Daily Forecast Days (3-30)",
-          "hourlysteps": "Hourly Forecast Hours (24-168)",
-          "gird": "Use Grid API (High Precision)",
-          "custom_ui": "Enable Custom UI Support"
+          "hourlysteps": "Hourly Forecast Hours (24-168)"
         }
       }
     }
