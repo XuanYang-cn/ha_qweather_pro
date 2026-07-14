@@ -4,6 +4,11 @@
 
 # <img src="custom_components/qweather_pro/brand/icon.png" width="64"> QWeather Pro for Home Assistant
 
+> This branch belongs to the `XuanYang-cn` personal maintenance fork. Its first
+> audited baseline is upstream `v1.1.6` at
+> `9232254cf7dd56c72aefb23b425a4dd29bab1f4e`; see
+> [docs/MAINTENANCE.md](docs/MAINTENANCE.md) before installing or upgrading.
+
 [![Release](https://img.shields.io/github/v/release/hzonz/ha_qweather_pro)](https://github.com/hzonz/ha_qweather_pro/releases)
 [![License](https://img.shields.io/badge/License-MIT-yellow.svg)](https://github.com/hzonz/ha_qweather_pro/blob/main/LICENSE)
 [![HACS Custom](https://img.shields.io/badge/HACS-Custom-orange.svg)](https://github.com/hacs/integration)

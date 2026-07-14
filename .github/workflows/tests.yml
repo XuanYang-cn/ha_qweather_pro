@@ -1,0 +1,31 @@
+name: Test personal fork
+
+on:
+  push:
+    branches: [main, "maint/**"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+      - name: Install the pinned Home Assistant test environment
+        run: uv sync --frozen --group test
+      - name: Compile the integration
+        run: uv run python -m compileall -q custom_components/qweather_pro
+      - name: Lint fork-owned seams and tests
+        run: >-
+          uv run ruff check
+          custom_components/qweather_pro/clients.py
+          custom_components/qweather_pro/location.py
+          tests
+      - name: Run offline config-entry tests
+        run: uv run pytest
