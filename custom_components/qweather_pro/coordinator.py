@@ -59,7 +59,6 @@ class QWeatherUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._base_interval = timedelta(minutes=DEFAULT_UPDATE_INTERVAL)
 
         self.api = clients.qweather
-        self.nationwide_warning_api = clients.nationwide_warnings
 
         super().__init__(
             hass,
@@ -287,21 +286,6 @@ class QWeatherUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         if self._should_update("indices", refresh_time):
             tasks["indices"] = self.api.get_indices(lat, lon, restricted_lang)
 
-        try:
-            nationwide_warnings = (
-                await self.nationwide_warning_api.async_fetch_active_warnings()
-            )
-        except Exception as err:
-            LOGGER.debug(
-                "China Weather nationwide warning baseline failed (%s)",
-                type(err).__name__,
-            )
-            nationwide_warnings = {
-                "source": "China Weather",
-                "status": "unavailable",
-                "warnings": [],
-            }
-
         results = await asyncio.gather(*tasks.values(), return_exceptions=True)
         for category, response in zip(tasks, results, strict=True):
             self._last_attempt_times[category] = refresh_time
@@ -421,7 +405,6 @@ class QWeatherUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             "city": self.city_name,
             "minutely_summary": None,
             "minutely_detail": [],
-            "nationwide_warnings": nationwide_warnings,
             "weather_abstract": self._generate_smart_abstract(c, now_dt),
             "dataset_status": self._dataset_statuses(refresh_time),
             "update_time": self._provider_time("now"),

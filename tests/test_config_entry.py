@@ -140,7 +140,19 @@ async def test_full_config_entry_uses_programmable_offline_clients(
     qweather = FakeQWeatherClient()
     nationwide_snapshot = {
         "source": "China Weather",
-        "warnings": [{"id": "synthetic-warning"}],
+        "updateTime": "2026-07-14T08:00+08:00",
+        "warnings": [
+            {
+                "alarmId": "synthetic-warning",
+                "provinceName": "合成地区",
+                "signaltype": "暴雨",
+                "signallevel": "orange",
+                "title": "合成地区暴雨橙色预警",
+                "issueTime": "2026-07-14T08:00+08:00",
+                "startTime": "2026-07-14T08:00+08:00",
+                "endTime": "2026-07-14T12:00+08:00",
+            }
+        ],
     }
     nationwide = FakeNationwideWarningClient(nationwide_snapshot)
     clients = ProviderClients(qweather=qweather, nationwide_warnings=nationwide)
@@ -172,12 +184,19 @@ async def test_full_config_entry_uses_programmable_offline_clients(
     assert qweather.location_calls == [("121.45,31.25", "zh")]
     assert nationwide.calls == 1
     assert entry.runtime_data.data["now"]["temp"] == 24.0
-    assert entry.runtime_data.data["nationwide_warnings"] == nationwide_snapshot
-    assert len(entities) == 6
+    assert "nationwide_warnings" not in entry.runtime_data.data
+    assert entry.runtime_data.nationwide_warning_coordinator.data["summary"] == {
+        "warning_count": 1,
+        "orange_red_count": 1,
+        "highest_level": "orange",
+    }
+    assert len(entities) == 8
     assert {entity.unique_id for entity in entities} == {
         f"{entry.entry_id}_aqi",
         f"{entry.entry_id}_today_temp_range",
         f"{entry.entry_id}_warning_info",
+        f"{entry.entry_id}_nationwide_warning_summary",
+        f"{entry.entry_id}_nationwide_warning_details",
         f"{entry.entry_id}_precipitation_summary",
         f"{entry.entry_id}_weather_summary",
         f"{entry.entry_id}_weather",
@@ -193,11 +212,26 @@ async def test_full_config_entry_uses_programmable_offline_clients(
         for entity in entities
         if entity.unique_id == f"{entry.entry_id}_precipitation_summary"
     )
+    nationwide_summary = next(
+        entity
+        for entity in entities
+        if entity.unique_id == f"{entry.entry_id}_nationwide_warning_summary"
+    )
+    nationwide_details = next(
+        entity
+        for entity in entities
+        if entity.unique_id == f"{entry.entry_id}_nationwide_warning_details"
+    )
     assert "custom_ui_more_info" not in weather.extra_state_attributes
     assert weather.extra_state_attributes["dataset_status"]["now"]["state"] == "fresh"
     assert aqi.extra_state_attributes["dataset_status"]["air"]["state"] == "fresh"
     assert aqi.extra_state_attributes["primary_pollutant"] == "unknown"
     assert precipitation.native_value is None
+    assert nationwide_summary.native_value == "orange"
+    assert nationwide_summary.extra_state_attributes["orange_red_count"] == 1
+    assert nationwide_details.native_value == 1
+    assert nationwide_details.extra_state_attributes["transport"] == "entity_attribute"
+    assert nationwide_details.extra_state_attributes["warnings"][0]["source"] == "China Weather"
     hass.config_entries.async_forward_entry_setups.assert_awaited_once_with(
         entry, PLATFORMS
     )
@@ -233,6 +267,65 @@ async def test_existing_non_shanghai_entry_fails_before_weather_requests(
     assert entry.unique_id == "qw_121.47_31.23"
     assert qweather.location_calls == [("121.45,31.25", "zh")]
     assert qweather.calls == ["location"]
+
+
+async def test_nationwide_warning_failure_does_not_degrade_qweather_data(
+    hass,
+    monkeypatch,
+) -> None:
+    """China Weather can be unavailable while every QWeather dataset remains fresh."""
+    qweather = FakeQWeatherClient()
+    _patch_provider_clients(
+        monkeypatch,
+        ProviderClients(
+            qweather=qweather,
+            nationwide_warnings=FakeNationwideWarningClient(
+                RuntimeError("synthetic nationwide failure")
+            ),
+        ),
+    )
+    entry = _config_entry()
+
+    assert await integration.async_setup_entry(hass, entry)
+
+    assert entry.runtime_data.data["dataset_status"]["now"]["state"] == "fresh"
+    nationwide_data = entry.runtime_data.nationwide_warning_coordinator.data
+    assert nationwide_data["dataset_status"]["state"] == "unavailable"
+    assert nationwide_data["warnings"] == []
+    assert qweather.calls == [
+        "location",
+        "now",
+        "daily",
+        "hourly",
+        "warning",
+        "air",
+        "indices",
+    ]
+
+
+async def test_qweather_refresh_does_not_drive_the_nationwide_warning_client(
+    hass,
+    monkeypatch,
+) -> None:
+    """The separate 30-minute coordinator is not called on a 10-minute refresh."""
+    qweather = FakeQWeatherClient()
+    nationwide = FakeNationwideWarningClient({"warnings": []})
+    _patch_provider_clients(
+        monkeypatch,
+        ProviderClients(qweather=qweather, nationwide_warnings=nationwide),
+    )
+    entry = _config_entry()
+    assert await integration.async_setup_entry(hass, entry)
+    coordinator = entry.runtime_data
+    initial_success = coordinator.data["dataset_status"]["now"]["last_success_time"]
+    clock = MutableClock(datetime.fromisoformat(initial_success))
+    monkeypatch.setattr(coordinator, "_now", clock.now)
+
+    clock.advance(timedelta(minutes=10))
+    await coordinator.async_refresh()
+
+    assert nationwide.calls == 1
+    assert qweather.calls.count("now") == 2
 
 
 async def test_weather_datasets_keep_independent_stale_and_recovery_states(

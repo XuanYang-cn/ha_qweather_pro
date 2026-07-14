@@ -168,6 +168,36 @@
         }
       },
 
+      "nationwide_warning_summary": {
+        "name": "全国气象预警摘要",
+        "state": {
+          "none": "无生效预警",
+          "unavailable": "全国预警不可用",
+          "blue": "蓝色",
+          "yellow": "黄色",
+          "orange": "橙色",
+          "red": "红色"
+        },
+        "state_attributes": {
+          "source": { "name": "来源" },
+          "warning_count": { "name": "生效预警数量" },
+          "orange_red_count": { "name": "橙色和红色预警数量" },
+          "highest_level": { "name": "最高等级" },
+          "nationwide_warning_status": { "name": "全国预警状态" }
+        }
+      },
+
+      "nationwide_warning_details": {
+        "name": "全国气象预警详情",
+        "state_attributes": {
+          "transport": { "name": "详情传输方式" },
+          "source": { "name": "来源" },
+          "warning_count": { "name": "生效预警数量" },
+          "warnings": { "name": "生效预警列表" },
+          "dataset_status": { "name": "全国预警状态" }
+        }
+      },
+
       "today_temp_range": {
         "name": "今日温度范围",
         "state": {

@@ -168,6 +168,36 @@
         }
       },
 
+      "nationwide_warning_summary": {
+        "name": "Nationwide Weather Warning Summary",
+        "state": {
+          "none": "No active warnings",
+          "unavailable": "Nationwide warnings unavailable",
+          "blue": "Blue",
+          "yellow": "Yellow",
+          "orange": "Orange",
+          "red": "Red"
+        },
+        "state_attributes": {
+          "source": { "name": "Source" },
+          "warning_count": { "name": "Active warning count" },
+          "orange_red_count": { "name": "Orange and red warning count" },
+          "highest_level": { "name": "Highest level" },
+          "nationwide_warning_status": { "name": "Nationwide warning status" }
+        }
+      },
+
+      "nationwide_warning_details": {
+        "name": "Nationwide Weather Warning Details",
+        "state_attributes": {
+          "transport": { "name": "Detail transport" },
+          "source": { "name": "Source" },
+          "warning_count": { "name": "Active warning count" },
+          "warnings": { "name": "Active warnings" },
+          "dataset_status": { "name": "Nationwide warning status" }
+        }
+      },
+
       "today_temp_range": {
         "name": "Today Temperature Range",
         "state": {

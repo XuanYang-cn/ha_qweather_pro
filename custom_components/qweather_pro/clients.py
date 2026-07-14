@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass
 from collections.abc import Mapping
 from typing import Any, Protocol
 
+from aiohttp import ClientSession
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_HOST
 from homeassistant.core import HomeAssistant
@@ -53,15 +55,36 @@ class QWeatherClient(Protocol):
     async def get_indices(self, lat: str, lon: str, lang: str) -> dict[str, Any]: ...
 
 
-class DisabledNationwideWarningClient:
-    """Keep refresh offline until the nationwide provider task is implemented."""
+class ChinaWeatherWarningClient:
+    """Read the public China Weather nationwide active-warning feed."""
+
+    _URL = "https://product.weather.com.cn/alarm/newalarmlist.shtml"
+
+    def __init__(self, session: ClientSession) -> None:
+        """Use Home Assistant's shared client session without QWeather credentials."""
+        self._session = session
 
     async def async_fetch_active_warnings(self) -> dict[str, Any]:
-        """Return an explicit disabled snapshot without making network calls."""
+        """Return a narrow snapshot for the isolated nationwide coordinator."""
+        async with asyncio.timeout(15):
+            async with self._session.get(
+                self._URL,
+                params={"count": -1},
+                headers={"Referer": "https://www.weather.com.cn/"},
+                raise_for_status=True,
+            ) as response:
+                payload = await response.json(content_type=None)
+        if isinstance(payload, list):
+            return {"warnings": payload}
+        if not isinstance(payload, Mapping):
+            raise ValueError("China Weather returned a non-object warning feed")
+        warnings = payload.get("warnings", payload.get("alerts", payload.get("data", [])))
+        if not isinstance(warnings, list):
+            raise ValueError("China Weather warning feed did not contain a list")
         return {
             "source": "China Weather",
-            "status": "not_configured",
-            "warnings": [],
+            "updateTime": payload.get("updateTime") or payload.get("publishTime"),
+            "warnings": warnings,
         }
 
 
@@ -109,5 +132,5 @@ def create_provider_clients(
     """Create production provider clients without exposing credentials."""
     return ProviderClients(
         qweather=create_qweather_client(hass, entry.data),
-        nationwide_warnings=DisabledNationwideWarningClient(),
+        nationwide_warnings=ChinaWeatherWarningClient(async_get_clientsession(hass)),
     )

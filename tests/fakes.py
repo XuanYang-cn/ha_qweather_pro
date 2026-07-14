@@ -137,10 +137,12 @@ class FakeQWeatherClient:
 class FakeNationwideWarningClient:
     """Return one programmable nationwide-warning snapshot."""
 
-    def __init__(self, response: dict[str, Any]) -> None:
+    def __init__(self, response: object) -> None:
         self.response = deepcopy(response)
         self.calls = 0
 
     async def async_fetch_active_warnings(self) -> dict[str, Any]:
         self.calls += 1
+        if isinstance(self.response, Exception):
+            raise self.response
         return deepcopy(self.response)

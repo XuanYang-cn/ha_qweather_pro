@@ -9,6 +9,7 @@ from homeassistant.loader import async_get_integration
 from .clients import JWTConfigurationError, create_provider_clients
 from .const import DOMAIN, PLATFORMS
 from .coordinator import QWeatherUpdateCoordinator
+from .nationwide_warnings import NationwideWarningCoordinator
 
 # 定义强类型别名，便于 IDE 补全 runtime_data
 type QWeatherConfigEntry = ConfigEntry[QWeatherUpdateCoordinator]
@@ -25,9 +26,16 @@ async def async_setup_entry(hass: HomeAssistant, entry: QWeatherConfigEntry) -> 
             "QWeather Pro requires JWT/Ed25519 reconfiguration"
         ) from error
     coordinator = QWeatherUpdateCoordinator(hass, entry, version, clients)
+    nationwide_warning_coordinator = NationwideWarningCoordinator(
+        hass,
+        entry,
+        clients.nationwide_warnings,
+    )
     
     # 执行初次刷新获取数据
     await coordinator.async_config_entry_first_refresh()
+    await nationwide_warning_coordinator.async_config_entry_first_refresh()
+    coordinator.nationwide_warning_coordinator = nationwide_warning_coordinator
 
     # 存储 runtime_data 并加载平台
     entry.runtime_data = coordinator

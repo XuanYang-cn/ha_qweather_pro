@@ -13,6 +13,7 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import ATTRIBUTION
 from .coordinator import QWeatherUpdateCoordinator
+from .nationwide_warnings import NationwideWarningCoordinator
 
 if TYPE_CHECKING:
     from homeassistant.core import HomeAssistant
@@ -147,11 +148,26 @@ async def async_setup_entry(
 ) -> None:
     """设置平台实体."""
     coordinator = entry.runtime_data
-
-    async_add_entities(
+    entities = [
         QWeatherSensor(coordinator, entry, description)
         for description in SENSOR_DESCRIPTIONS
+    ]
+    nationwide_coordinator = coordinator.nationwide_warning_coordinator
+    entities.extend(
+        (
+            NationwideWarningSummarySensor(
+                nationwide_coordinator,
+                coordinator,
+                entry,
+            ),
+            NationwideWarningDetailSensor(
+                nationwide_coordinator,
+                coordinator,
+                entry,
+            ),
+        )
     )
+    async_add_entities(entities)
 
 class QWeatherSensor(CoordinatorEntity[QWeatherUpdateCoordinator], SensorEntity):
     """和风天气传感器."""
@@ -187,3 +203,92 @@ class QWeatherSensor(CoordinatorEntity[QWeatherUpdateCoordinator], SensorEntity)
             except Exception:
                 pass
         return attrs
+
+
+class NationwideWarningSensor(
+    CoordinatorEntity[NationwideWarningCoordinator],
+    SensorEntity,
+):
+    """Read-only entity base for China Weather nationwide warning data."""
+
+    _attr_has_entity_name = True
+    _attr_icon = "mdi:alert-decagram"
+
+    def __init__(
+        self,
+        coordinator: NationwideWarningCoordinator,
+        qweather_coordinator: QWeatherUpdateCoordinator,
+        entry: QWeatherConfigEntry,
+        key: str,
+    ) -> None:
+        """Keep nationwide entities on the existing integration device."""
+        super().__init__(coordinator)
+        self._attr_unique_id = f"{entry.entry_id}_{key}"
+        self._attr_translation_key = key
+        self._attr_device_info = qweather_coordinator.device_info
+
+
+class NationwideWarningSummarySensor(NationwideWarningSensor):
+    """Expose counts and highest level for a compact overview consumer."""
+
+    def __init__(
+        self,
+        coordinator: NationwideWarningCoordinator,
+        qweather_coordinator: QWeatherUpdateCoordinator,
+        entry: QWeatherConfigEntry,
+    ) -> None:
+        super().__init__(
+            coordinator,
+            qweather_coordinator,
+            entry,
+            "nationwide_warning_summary",
+        )
+
+    @property
+    def native_value(self) -> str:
+        """Return the highest active color level or a truthful availability state."""
+        data = self.coordinator.data
+        if data["dataset_status"]["state"] == "unavailable":
+            return "unavailable"
+        return data["summary"]["highest_level"]
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        """Keep summary attributes compact for the dashboard overview."""
+        data = self.coordinator.data
+        return {
+            "attribution": "Data provided by China Weather",
+            "source": data["source"],
+            **data["summary"],
+            "nationwide_warning_status": data["dataset_status"],
+        }
+
+
+class NationwideWarningDetailSensor(NationwideWarningSensor):
+    """Expose the untruncated list through an explicit read-only contract."""
+
+    def __init__(
+        self,
+        coordinator: NationwideWarningCoordinator,
+        qweather_coordinator: QWeatherUpdateCoordinator,
+        entry: QWeatherConfigEntry,
+    ) -> None:
+        super().__init__(
+            coordinator,
+            qweather_coordinator,
+            entry,
+            "nationwide_warning_details",
+        )
+
+    @property
+    def native_value(self) -> int:
+        """Return list cardinality without reserializing the warning records."""
+        return self.coordinator.data["summary"]["warning_count"]
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        """Publish the full list without silent truncation for the detail dialog."""
+        return {
+            "attribution": "Data provided by China Weather",
+            **self.coordinator.detail_contract,
+        }
