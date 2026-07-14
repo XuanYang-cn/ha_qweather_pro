@@ -16,6 +16,7 @@ from custom_components.qweather_pro.const import (
     CONF_HOURLYSTEPS,
     CONF_KEY_ID,
     CONF_LOCATION_ID,
+    CONF_PRIVATE_KEY,
     CONF_PROJECT_ID,
     CONF_UPDATE_INTERVAL,
     CONF_USE_TOKEN,
@@ -87,6 +88,7 @@ async def test_full_config_entry_uses_programmable_offline_clients(
         AsyncMock(return_value=SimpleNamespace(version="1.1.6-yx.0")),
     )
     entry = _config_entry()
+    assert CONF_PRIVATE_KEY not in entry.data
 
     assert await integration.async_setup_entry(hass, entry)
 

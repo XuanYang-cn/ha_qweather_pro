@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from typing import Any, Protocol
 
 from homeassistant.config_entries import ConfigEntry
+from homeassistant.const import CONF_HOST
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
@@ -79,7 +80,7 @@ def create_provider_clients(
             project_id=entry.data.get(CONF_PROJECT_ID),
             key_id=entry.data.get(CONF_KEY_ID),
             private_key=entry.data.get(CONF_PRIVATE_KEY),
-            host=entry.data.get("host"),
+            host=entry.data.get(CONF_HOST),
         ),
         nationwide_warnings=DisabledNationwideWarningClient(),
     )

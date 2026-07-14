@@ -112,7 +112,11 @@ class QWeatherAPI:
 
                 # 如果不是 200，则在返回字典中强制注入 http_status
                 if resp.status != 200:
-                    LOGGER.error("QWeather API Error: %s (URL: %s)", resp.status, url)
+                    LOGGER.error(
+                        "QWeather API error %s for endpoint %s",
+                        resp.status,
+                        endpoint,
+                    )
                     return {
                         "code": str(resp.status),
                         "http_status": resp.status,
@@ -124,7 +128,7 @@ class QWeatherAPI:
             LOGGER.debug("QWeather API 请求超时: %s", endpoint)
             raise # 触发重试
         except Exception as err:
-            LOGGER.error("QWeather API 连接失败: %s", err)
+            LOGGER.error("QWeather API connection failed (%s)", type(err).__name__)
             raise # 触发重试
 
     # --- 城市搜索 ---
