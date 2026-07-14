@@ -9,13 +9,16 @@
 > `9232254cf7dd56c72aefb23b425a4dd29bab1f4e`; see
 > [docs/MAINTENANCE.md](docs/MAINTENANCE.md) before installing or upgrading.
 
-[![Release](https://img.shields.io/github/v/release/hzonz/ha_qweather_pro)](https://github.com/hzonz/ha_qweather_pro/releases)
-[![License](https://img.shields.io/badge/License-MIT-yellow.svg)](https://github.com/hzonz/ha_qweather_pro/blob/main/LICENSE)
+[![Release](https://img.shields.io/github/v/release/XuanYang-cn/ha_qweather_pro)](https://github.com/XuanYang-cn/ha_qweather_pro/releases)
+[![License](https://img.shields.io/badge/License-MIT-yellow.svg)](https://github.com/XuanYang-cn/ha_qweather_pro/blob/main/LICENSE)
 [![HACS Custom](https://img.shields.io/badge/HACS-Custom-orange.svg)](https://github.com/hacs/integration)
-![](https://komarev.com/ghpvc/?username=hzonz&color=ff69b4)
+![](https://komarev.com/ghpvc/?username=XuanYang-cn&color=ff69b4)
 
-## A deeply customized advanced QWeather (HeWeather) integration for Home Assistant.  
-Rebuilt using the latest 2026 development standards, delivering not only highly accurate meteorological data but also ultra-fast native SVG weather cards and professional-grade detail popups.
+## A maintained QWeather data integration for Home Assistant.
+
+This personal fork focuses on trustworthy provider data and stable Home Assistant
+entities. Dashboard and detail UI are owned by the separate Home Assistant
+operations repository rather than auto-registered by this integration.
 
 ## ✨ Core Features
 
@@ -25,16 +28,16 @@ Rebuilt using the latest 2026 development standards, delivering not only highly 
 
 - ⚡ **Extreme Performance**
   - **Backend:** Powered by DataUpdateCoordinator with concurrent requests and smart caching to minimize API usage.
-  - **Frontend:** Removes heavy libraries like Chart.js; uses native SVG to render temperature trend curves with 10× faster performance.
+  - **Frontend boundary:** Does not inject integration-owned JavaScript into Home Assistant.
 
-- 📊 **Deep Data**
-  - **Minutely precipitation:** Native API-driven minute-level precipitation summary (e.g., “No precipitation in the next two hours”).
-  - **Weather summary:** Logically synthesized hourly weather trend summary.
-  - **Rich sensors:** AQI (with detailed components), today’s temperature range, alert count, weather summary, and more.
+- 📊 **Provider Data**
+  - Standard city current conditions, hourly and daily forecasts, AQI, and local alerts.
+  - Privacy-quantized coordinates with a warning-jurisdiction verification step.
+  - Minute precipitation and grid-weather calls are disabled in the first fork version.
 
-- 🎨 **Professional Visuals**
-  - **Dashboard card:** Faithfully recreates the look of premium weather apps, supporting 7-day and 24-hour forecast switching.
-  - **Custom detail popup:** When enabled, replaces HA’s default popup with lifestyle indices, alert details, and more.
+- 🎨 **Data-only Frontend Contract**
+  - The bundled upstream card and custom more-info files are not auto-registered.
+  - Repository-owned Lovelace UI consumes the integration entities instead.
 
 - 🔄 **Latest Standards**  
   - Fully compatible with HA 2024.3+ WebSocket forecast subscription for long-term smooth operation.
@@ -46,7 +49,7 @@ QWeather Pro  internationalized, providing a seamless localized experience for 
 - **Automatic Language Sync**: The integration automatically detects your Home Assistant system language (Settings -> System -> General) and requests weather data in the matching language (supporting 30+ languages).
 - **Smart Fallback Mechanism**:
   - **Core Weather/Alerts/AQI**: Supports all 30+ languages provided by QWeather API (e.g., German, French, Japanese, etc.).
-  - **Minutely Precipitation & Life Indices**: Due to API constraints, these specific fields will automatically fallback to **English** if the system language is not Chinese, ensuring stable data delivery.
+  - **Life Indices**: Fall back to English when the provider does not support the Home Assistant language. The first fork version does not call minute precipitation.
 - **Localized Titles & IDs**: During the setup flow, the integration fetches and locks the city name based on your current language (e.g., "BeiJing" in Chinese or "BeiJing" in English), generating clean, localized Entity IDs.
 
 ## 📦 Installation
@@ -57,7 +60,7 @@ QWeather Pro  internationalized, providing a seamless localized experience for 
 2. Select **“Custom repositories”**.
 3. Enter:
 ```yaml
-https://github.com/hzonz/ha_qweather_pro
+https://github.com/XuanYang-cn/ha_qweather_pro
 ```
 4. Choose category **Integration**.
 5. Click **Add**.
@@ -68,7 +71,7 @@ https://github.com/hzonz/ha_qweather_pro
 
 1. Download the latest release:  
 ```yaml
-https://github.com/hzonz/ha_qweather_pro
+https://github.com/XuanYang-cn/ha_qweather_pro
 ```
 2. Extract and place `custom_components/qweather_pro` into your Home Assistant `custom_components` directory.
 3. Restart Home Assistant.

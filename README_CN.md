@@ -4,12 +4,19 @@
 
 # <img src="custom_components/qweather_pro/brand/icon.png" width="64"> 和风天气Pro (QWeather Pro)
 
-[![Release](https://img.shields.io/github/v/release/hzonz/ha_qweather_pro)](https://github.com/hzonz/ha_qweather_pro/releases)
-[![License](https://img.shields.io/badge/License-MIT-yellow.svg)](https://github.com/hzonz/ha_qweather_pro/blob/main/LICENSE)
-[![HACS Custom](https://img.shields.io/badge/HACS-Custom-orange.svg)](https://github.com/hacs/integration)
-![](https://komarev.com/ghpvc/?username=hzonz&color=ff69b4)
+> 当前分支属于 `XuanYang-cn` 个人维护 fork。首个审计基线是上游
+> `v1.1.6` / `9232254cf7dd56c72aefb23b425a4dd29bab1f4e`；安装或升级前请先阅读
+> [docs/MAINTENANCE.md](docs/MAINTENANCE.md)。
 
-## 一款为 Home Assistant 深度定制的 和风天气 (QWeather) 高级集成。采用 2026 年最新开发标准重构，不仅提供精准的气象数据，还包含极速渲染的 原生 SVG 天气卡片 与 专业级详情弹窗。
+[![Release](https://img.shields.io/github/v/release/XuanYang-cn/ha_qweather_pro)](https://github.com/XuanYang-cn/ha_qweather_pro/releases)
+[![License](https://img.shields.io/badge/License-MIT-yellow.svg)](https://github.com/XuanYang-cn/ha_qweather_pro/blob/main/LICENSE)
+[![HACS Custom](https://img.shields.io/badge/HACS-Custom-orange.svg)](https://github.com/hacs/integration)
+![](https://komarev.com/ghpvc/?username=XuanYang-cn&color=ff69b4)
+
+## 面向 Home Assistant 的可维护和风天气数据集成
+
+个人 fork 聚焦可信的提供方数据和稳定的 Home Assistant 实体；仪表盘与详情 UI
+由独立的 Home Assistant 运维仓库负责，本集成不再自动注册上游前端。
 
 ## ✨ 核心特性
 
@@ -17,13 +24,13 @@
 - ⚡ 极致性能：
   - 后端：采用 DataUpdateCoordinator 并发请求机制，智能缓存，最大限度节省免费版 API 额度。
   - 前端：完全剔除 Chart.js 等臃肿库，使用 原生 SVG 渲染温度趋势曲线，渲染速度提升 10 倍以上。
-- 📊 深度数据：
-  - 分钟级降水：API 原生驱动的分钟级降水简报（如：“未来两小时无降水”）。
-  - 天气概况：逻辑合成的小时级天气变动简报。
-  - 丰富传感器：包含 AQI（含详细参数）、今日温差、预警数量、气象摘要等。
-- 🎨 专业视觉：
-  - 仪表盘卡片：1:1 复刻专业天气 App 质感，支持 7 日预报与 24 小时预报切换。
-  - 自定义详情页：开启后可替换 HA 默认弹窗，显示 8 项生活指数、气象预警详情等丰富信息。
+- 📊 提供方数据：
+  - 标准城市当前天气、逐小时和逐日预报、AQI 与本地气象预警。
+  - 坐标先量化到约 5 公里精度，再验证仍属于所选气象预警辖区。
+  - 第一版关闭分钟降雨和格点天气调用。
+- 🎨 纯数据前端合同：
+  - 不自动注册上游天气卡与 custom more-info。
+  - 仓库自有 Lovelace UI 通过集成实体读取数据。
 - 🔄 最新标准：完全适配 HA 2024.3+ 的 WebSocket 预报订阅 机制，确保系统长期运行流畅不卡顿。
 
 ## 🌍 国际化与多语言支持 (i18n)
@@ -33,7 +40,7 @@ QWeather Pro 现已实现全链路国际化适配，旨在为全球用户提供�
 - **自动同步系统语言**：集成将自动识别 Home Assistant 的系统语言（设置 -> 系统 -> 通用），并同步请求对应语言的天气数据（支持 30+ 种语言）。
 - **智能语言回退机制**：
   - **基础天气/预警/AQI**：支持和风天气覆盖的所有 30 余种语言（如德语、法语、日语等）。
-  - **分钟级降水 & 生活指数**：由于 API 限制，当系统设置为非中英语言时，这两个字段将自动回退至**英文**展示，确保数据永不报错。
+  - **生活指数**：当系统语言不受接口支持时回退为英文；第一版不调用分钟级降水接口。
 - **自定义标题与 ID**：在安装阶段，集成会根据当前语言自动抓取并锁定城市名称（如：中文“北京”或英文“BeiJing”），从而生成美观且符合当地语言习惯的实体 ID。
 
 ## 📦 安装
@@ -44,7 +51,7 @@ QWeather Pro 现已实现全链路国际化适配，旨在为全球用户提供�
 2. 选择"自定义存储库"
 3. 在存储库字段输入：
 ```yaml
-https://github.com/hzonz/ha_qweather_pro
+https://github.com/XuanYang-cn/ha_qweather_pro
 ```
 4. 类别选择"集成"
 5. 点击"添加"保存
@@ -55,7 +62,7 @@ https://github.com/hzonz/ha_qweather_pro
 
 1. 下载最新的:
 ```yaml
-https://github.com/hzonz/ha_qweather_pro
+https://github.com/XuanYang-cn/ha_qweather_pro
 ```
 2. 解压并将`custom_components/qweather_pro`文件夹放入Home Assistant的`custom_components`目录
 3. 重启Home Assistant

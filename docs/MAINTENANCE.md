@@ -26,10 +26,10 @@ put it in fixtures or release archives, or print it in logs. Tests use synthetic
 Shanghai locations and injected fake clients; they make no cloud requests.
 
 The first fork version always uses standard city weather, quantizes provider
-coordinates to a `0.05°` grid, verifies that the quantized point remains in the
-selected country/province/city warning jurisdiction, disables grid and minute
-weather calls, and does not auto-register the upstream dashboard card or custom
-more-info UI.
+coordinates to a `0.05°` grid, verifies before weather requests that the
+quantized point remains in the expected Shanghai warning jurisdiction (including
+for older config entries), disables grid and minute weather calls, and does not
+auto-register the upstream dashboard card or custom more-info UI.
 
 ## Rebuilding the branch
 
