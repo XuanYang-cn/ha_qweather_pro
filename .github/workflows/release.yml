@@ -58,7 +58,7 @@ jobs:
           find custom_components/${{ steps.check.outputs.comp_name }} \
             -type d -name __pycache__ -prune -exec rm -rf {} +
           cd custom_components/${{ steps.check.outputs.comp_name }}
-          zip -r ../../${{ steps.check.outputs.comp_name }}.zip . \
+          zip -r -UN=UTF8 ../../${{ steps.check.outputs.comp_name }}.zip . \
             -x '*/__pycache__/*' '*.py[co]'
 
       - name: Create GitHub Release
