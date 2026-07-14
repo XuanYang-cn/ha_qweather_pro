@@ -55,11 +55,16 @@ jobs:
       - name: Create ZIP file
         if: steps.check.outputs.compare_result == 'success'
         run: |
-          find custom_components/${{ steps.check.outputs.comp_name }} \
-            -type d -name __pycache__ -prune -exec rm -rf {} +
-          cd custom_components/${{ steps.check.outputs.comp_name }}
-          zip -r -UN=UTF8 ../../${{ steps.check.outputs.comp_name }}.zip . \
-            -x '*/__pycache__/*' '*.py[co]'
+          python3 - <<'PY'
+          from pathlib import Path
+          from zipfile import ZIP_DEFLATED, ZipFile
+
+          root = Path("custom_components/${{ steps.check.outputs.comp_name }}")
+          with ZipFile(f"{root.name}.zip", "w", ZIP_DEFLATED) as archive:
+              for path in root.rglob("*"):
+                  if path.is_file() and "__pycache__" not in path.parts and path.suffix not in {".pyc", ".pyo"}:
+                      archive.write(path, path.relative_to(root).as_posix())
+          PY
 
       - name: Create GitHub Release
         if: steps.check.outputs.compare_result == 'success'
