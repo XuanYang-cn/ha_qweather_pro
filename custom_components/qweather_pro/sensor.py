@@ -26,12 +26,41 @@ class QWeatherSensorEntityDescription(SensorEntityDescription):
     value_fn: Callable[[dict[str, Any]], Any]
     attr_fn: Callable[[dict[str, Any]], dict[str, Any]] | None = None
 
+
+def _today_temperature_range(data: dict[str, Any]) -> str:
+    """Format a range only when both provider temperatures are known."""
+    daily = data.get("daily")
+    if not daily:
+        return "unknown"
+    low = daily[0].get("native_templow")
+    high = daily[0].get("native_temperature")
+    if low is None or high is None:
+        return "unknown"
+    return f"{int(low)}°C/{int(high)}°C"
+
+
+def _temperature_attribute(value: Any) -> str | None:
+    """Avoid formatting an absent provider temperature as a real value."""
+    return f"{value}°C" if value is not None else None
+
+
+def _today_temperature_attributes(data: dict[str, Any]) -> dict[str, str | None]:
+    """Expose today values only when the provider supplied each one."""
+    daily = data.get("daily")
+    if not daily:
+        return {"max_temp": None, "min_temp": None}
+    return {
+        "max_temp": _temperature_attribute(daily[0].get("native_temperature")),
+        "min_temp": _temperature_attribute(daily[0].get("native_templow")),
+    }
+
+
 SENSOR_DESCRIPTIONS: tuple[QWeatherSensorEntityDescription, ...] = (
     QWeatherSensorEntityDescription(
         key="aqi",
         translation_key="aqi",
         icon="mdi:air-filter",
-        value_fn=lambda data: data.get("aqi", {}).get("category", "unknown"),
+        value_fn=lambda data: data.get("aqi", {}).get("category") or "unknown",
         attr_fn=lambda data: {
             # 基础数据
             "aqi_value": (aqi := data.get("aqi", {})).get("aqi"),
@@ -59,15 +88,8 @@ SENSOR_DESCRIPTIONS: tuple[QWeatherSensorEntityDescription, ...] = (
         key="today_temp_range",
         translation_key="today_temp_range",
         icon="mdi:thermometer-lines",
-        value_fn=lambda data: (
-            f"{int(daily[0].get('native_templow'))}°C/"
-            f"{int(daily[0].get('native_temperature'))}°C"
-            if (daily := data.get("daily")) else "unknown"
-        ),
-        attr_fn=lambda data: {
-            "max_temp": f"{daily[0].get('native_temperature')}°C" if (daily := data.get("daily")) and len(daily) > 0 else None,
-            "min_temp": f"{daily[0].get('native_templow')}°C" if (daily := data.get("daily")) and len(daily) > 0 else None,
-        },
+        value_fn=_today_temperature_range,
+        attr_fn=_today_temperature_attributes,
     ),
     QWeatherSensorEntityDescription(
         key="warning_info",
@@ -133,6 +155,10 @@ class QWeatherSensor(CoordinatorEntity[QWeatherUpdateCoordinator], SensorEntity)
     def extra_state_attributes(self) -> dict[str, Any] | None:
         """添加额外属性."""
         attrs = {"attribution": ATTRIBUTION}
+        if self.coordinator.data:
+            attrs["dataset_status"] = self.coordinator.data.get(
+                "dataset_status", {}
+            )
         if self.entity_description.attr_fn:
             try:
                 attrs.update(self.entity_description.attr_fn(self.coordinator.data))

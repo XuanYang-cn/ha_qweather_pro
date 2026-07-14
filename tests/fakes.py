@@ -35,14 +35,23 @@ QWEATHER_RESPONSES = {
             "obsTime": "2026-07-14T08:00+08:00",
         },
     },
-    "daily": {"code": "200", "daily": []},
-    "hourly": {"code": "200", "hourly": []},
+    "daily": {
+        "code": "200",
+        "updateTime": "2026-07-14T08:00+08:00",
+        "daily": [],
+    },
+    "hourly": {
+        "code": "200",
+        "updateTime": "2026-07-14T08:00+08:00",
+        "hourly": [],
+    },
     "warning": {"metadata": {"tag": "synthetic"}, "alerts": []},
     "air": {
         "metadata": {"tag": "synthetic"},
         "indexes": [
             {
                 "aqi": 42,
+                "pubTime": "2026-07-14T08:00+08:00",
                 "category": "优",
                 "level": "1",
                 "primaryPollutant": None,
@@ -62,10 +71,15 @@ class FakeQWeatherClient:
         self.responses = deepcopy(responses or QWEATHER_RESPONSES)
         self.calls: list[str] = []
         self.location_calls: list[tuple[str, str]] = []
+        self.forecast_calls: list[str] = []
+        self.hourly_calls: list[str] = []
 
     async def _response(self, name: str) -> dict[str, Any]:
         self.calls.append(name)
-        return deepcopy(self.responses[name])
+        response = self.responses[name]
+        if isinstance(response, Exception):
+            raise response
+        return deepcopy(response)
 
     async def get_weather_now(self, *_args: Any) -> dict[str, Any]:
         return await self._response("now")
@@ -75,10 +89,12 @@ class FakeQWeatherClient:
         self.location_calls.append((location, lang))
         return deepcopy(self.responses["location"])
 
-    async def get_forecast(self, *_args: Any) -> dict[str, Any]:
+    async def get_forecast(self, _lat: str, _lon: str, days: str, _lang: str) -> dict[str, Any]:
+        self.forecast_calls.append(days)
         return await self._response("daily")
 
-    async def get_hourly(self, *_args: Any) -> dict[str, Any]:
+    async def get_hourly(self, _lat: str, _lon: str, hours: str, _lang: str) -> dict[str, Any]:
+        self.hourly_calls.append(hours)
         return await self._response("hourly")
 
     async def get_warning_v1(self, *_args: Any) -> dict[str, Any]:

@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import asyncio
-import time
+from collections.abc import Mapping
 from datetime import datetime, timedelta
 from typing import Any
 
@@ -14,9 +14,12 @@ import homeassistant.util.dt as dt_util
 
 from .clients import ProviderClients
 from .const import (
-    DOMAIN, CONF_LOCATION_ID, CONF_UPDATE_INTERVAL,
-    SUGGESTION_TYPE_MAP, CONF_DAILYSTEPS, CONF_HOURLYSTEPS, 
-    DEFAULT_UPDATE_INTERVAL, LANGUAGE_MAP, LOGGER
+    DEFAULT_UPDATE_INTERVAL,
+    DOMAIN,
+    CONF_LOCATION_ID,
+    LANGUAGE_MAP,
+    LOGGER,
+    SUGGESTION_TYPE_MAP,
 )
 from .condition import CONDITION_MAP
 from .location import (
@@ -24,22 +27,15 @@ from .location import (
     verified_shanghai_location,
 )
 
-# --- 数据缓存有效期控制 (单位: 秒) ---
-# 每日预报：7200秒 (2小时)
-# 理由：每日预报的宏观气象模型更新缓慢，2小时刷新一次完全足够。
-TTL_DAILY = 7200
-
-# 逐小时预报：3600秒 (1小时)
-# 理由：逐小时预报通常也是基于几小时更新一次的模型，15-30分钟刷新并不会带来新数据。
-TTL_HOURLY = 3600
-
-# 空气质量：3600秒 (1小时)
-# 理由：环保部门的空气监测站通常是整点发布数据，每小时抓取一次最科学。
-TTL_AIR = 3600
-
-# 生活指数：10800秒 (3小时)
-# 理由：建议类数据（洗车、穿衣等）全天更新频率极低，3小时更新一次即可。
-TTL_INDICES = 10800
+CORE_DATASETS = ("now", "daily", "hourly", "air")
+DATASET_INTERVALS = {
+    "now": timedelta(minutes=10),
+    "daily": timedelta(minutes=60),
+    "hourly": timedelta(minutes=60),
+    "air": timedelta(minutes=60),
+    "warning": timedelta(minutes=30),
+    "indices": timedelta(minutes=180),
+}
 
 class QWeatherUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     """QWeather 数据异步调度中心."""
@@ -57,10 +53,7 @@ class QWeatherUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self.location = quantize_location_input(entry.data.get(CONF_LOCATION_ID, ""))
         self._location_verified = False
         self.city_name = entry.title
-        self._consecutive_failures = 0 # 追踪连续失败次数
-
-        update_min = entry.options.get(CONF_UPDATE_INTERVAL, DEFAULT_UPDATE_INTERVAL)
-        self._base_interval = timedelta(minutes=update_min)
+        self._base_interval = timedelta(minutes=DEFAULT_UPDATE_INTERVAL)
 
         self.api = clients.qweather
         self.nationwide_warning_api = clients.nationwide_warnings
@@ -73,36 +66,96 @@ class QWeatherUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             update_interval=self._base_interval,
         )
         
-        # 初始化本地持久化缓存
-        self._cache_data: dict[str, Any] = {
-            "now": {}, "daily": {}, "hourly": {}, "air": {}, 
-            "indices": {}, "warning": {}
+        self._cache_data: dict[str, dict[str, Any] | None] = {
+            "now": None,
+            "daily": None,
+            "hourly": None,
+            "air": None,
+            "indices": None,
+            "warning": None,
         }
-        self._last_update_times: dict[str, float] = {}
+        self._last_success_times: dict[str, datetime] = {}
+        self._last_update_results: dict[str, str] = {
+            dataset: "unavailable" for dataset in DATASET_INTERVALS
+        }
 
-    def _should_update(self, category: str, ttl: int) -> bool:
-        """分时更新判断."""
-        now_ts = time.time()
-        now_dt = dt_util.now()
-        is_night = 0 <= now_dt.hour < 5
-        actual_ttl = ttl * 2 if is_night else ttl
-        last_time = self._last_update_times.get(category, 0)
-        result = (now_ts - last_time) > actual_ttl
+    def _now(self) -> datetime:
+        """Return the refresh time through one controllable contract seam."""
+        return dt_util.utcnow()
 
-        if result and is_night:
-            LOGGER.debug("QWeather 深夜降频模式生效: %s 将在 %s 秒后更新", category, actual_ttl)
+    def _should_update(self, category: str, now: datetime) -> bool:
+        """Refresh a dataset as soon as its fixed next-refresh time is due."""
+        last_success = self._last_success_times.get(category)
+        return (
+            last_success is None
+            or now - last_success >= DATASET_INTERVALS[category]
+        )
 
-        return result
+    @staticmethod
+    def _response_succeeded(response: object) -> bool:
+        """Identify successful QWeather V7 and V1 response envelopes."""
+        return isinstance(response, Mapping) and (
+            response.get("code") == "200" or "metadata" in response
+        )
 
-    def _to_f(self, val: Any, default: float | None = None) -> float | None:
-        """数值安全转换工具."""
+    @staticmethod
+    def _response_failure_type(response: object) -> str:
+        """Describe a failed fake/provider result without logging its contents."""
+        if isinstance(response, Exception):
+            return type(response).__name__
+        if isinstance(response, Mapping):
+            return f"response-{response.get('code', 'invalid')}"
+        return type(response).__name__
+
+    def _provider_time(self, category: str) -> str | None:
+        """Read a provider timestamp from a cached response without inventing one."""
+        response = self._cache_data.get(category)
+        if not isinstance(response, Mapping):
+            return None
+        if category == "now":
+            now_data = response.get("now")
+            return now_data.get("obsTime") if isinstance(now_data, Mapping) else None
+        if category == "air":
+            indexes = response.get("indexes")
+            if isinstance(indexes, list) and indexes and isinstance(indexes[0], Mapping):
+                return indexes[0].get("pubTime") or indexes[0].get("updateTime")
+        metadata = response.get("metadata")
+        if isinstance(metadata, Mapping):
+            return metadata.get("updateTime") or metadata.get("publishTime")
+        return response.get("updateTime") or response.get("publishTime")
+
+    def _dataset_statuses(self, now: datetime) -> dict[str, dict[str, str | None]]:
+        """Publish independent freshness and result state for each core dataset."""
+        statuses: dict[str, dict[str, str | None]] = {}
+        for category in CORE_DATASETS:
+            last_success = self._last_success_times.get(category)
+            result = self._last_update_results[category]
+            provider_time = self._provider_time(category)
+            if self._cache_data[category] is None or last_success is None:
+                state = "unavailable"
+            elif result == "failed" or now - last_success >= DATASET_INTERVALS[category]:
+                state = "stale"
+            elif provider_time is None:
+                state = "unavailable"
+            else:
+                state = "fresh"
+            statuses[category] = {
+                "provider_time": provider_time,
+                "last_success_time": last_success.isoformat() if last_success else None,
+                "last_update_result": result,
+                "state": state,
+            }
+        return statuses
+
+    def _to_f(self, val: Any) -> float | None:
+        """Convert a provider number without inventing a default value."""
         try:
             return float(val)
         except (TypeError, ValueError):
-            return default
+            return None
 
     async def _async_update_data(self) -> dict[str, Any]:
-        """主抓取任务：调用 api.py 进行多端点并发请求."""
+        """Refresh independent provider datasets without hiding failed snapshots."""
 
         if not self._location_verified:
             try:
@@ -117,55 +170,31 @@ class QWeatherUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 ) from err
             self._location_verified = True
 
-        # 国际化语言适配
-        ha_lang = self.hass.config.language # 例如 "zh-Hans" 或 "fr"
-        qweather_lang = LANGUAGE_MAP.get(ha_lang, "en") # 匹配不到则默认英文        
+        ha_lang = self.hass.config.language
+        qweather_lang = LANGUAGE_MAP.get(ha_lang, "en")
         restricted_lang = "zh" if ha_lang.startswith("zh") else "en"
-
-        now_ts = time.time()
-        now_dt = dt_util.now()
-        tasks = []
-        task_map = []
-
-        options = self.entry.options
+        refresh_time = self._now()
+        now_dt = dt_util.as_local(refresh_time)
 
         # 预处理坐标参数
         try:
             lon, lat = [c.strip() for c in self.location.split(',')]
-        except Exception:
-            raise UpdateFailed(f"Invalid location format: {self.location}")
+        except ValueError as error:
+            raise UpdateFailed("Invalid configured location format") from error
 
-        # ---构建并发请求队列 ---
-        
-        # 第一版固定使用标准城市天气，不调用格点天气。
-        tasks.append(self.api.get_weather_now(lat, lon, qweather_lang))
-        task_map.append("now")
-
-        # 逐日预报 (带 TTL 保护)
-        if self._should_update("daily", TTL_DAILY):
-            d_val = int(options.get(CONF_DAILYSTEPS, 7))
-            tasks.append(self.api.get_forecast(lat, lon, f"{d_val}d", qweather_lang))
-            task_map.append("daily")
-
-        # 逐小时预报 (带 TTL 保护)
-        if self._should_update("hourly", TTL_HOURLY):
-            h_val = int(options.get(CONF_HOURLYSTEPS, 24))
-            tasks.append(self.api.get_hourly(lat, lon, f"{h_val}h", qweather_lang))
-            task_map.append("hourly")
-
-        # 预警
-        tasks.append(self.api.get_warning_v1(lat, lon, qweather_lang))
-        task_map.append("warning")
-
-        # 专业空气质量 (格点模式下通常由实况提供基础AQI，此处强制调用V1专业接口)
-        if self._should_update("air", TTL_AIR):
-            tasks.append(self.api.get_air_v1(lat, lon, qweather_lang))
-            task_map.append("air")
-
-        # 生活指数
-        if self._should_update("indices", TTL_INDICES):
-            tasks.append(self.api.get_indices(lat, lon, restricted_lang))
-            task_map.append("indices")
+        tasks: dict[str, Any] = {
+            "now": self.api.get_weather_now(lat, lon, qweather_lang),
+        }
+        if self._should_update("daily", refresh_time):
+            tasks["daily"] = self.api.get_forecast(lat, lon, "7d", qweather_lang)
+        if self._should_update("hourly", refresh_time):
+            tasks["hourly"] = self.api.get_hourly(lat, lon, "24h", qweather_lang)
+        if self._should_update("warning", refresh_time):
+            tasks["warning"] = self.api.get_warning_v1(lat, lon, qweather_lang)
+        if self._should_update("air", refresh_time):
+            tasks["air"] = self.api.get_air_v1(lat, lon, qweather_lang)
+        if self._should_update("indices", refresh_time):
+            tasks["indices"] = self.api.get_indices(lat, lon, restricted_lang)
 
         try:
             nationwide_warnings = (
@@ -182,52 +211,30 @@ class QWeatherUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 "warnings": [],
             }
 
-        # ---并发执行与结果合并 ---
-        try:
-            results = await asyncio.gather(*tasks, return_exceptions=True)
-            success_any = False
-
-            for i, res in enumerate(results):
-                category = task_map[i]
-                if isinstance(res, dict) and (res.get("code") == "200" or "metadata" in res):
-                    self._cache_data[category] = res
-                    self._last_update_times[category] = now_ts
-                    success_any = True
-                elif isinstance(res, Exception):
-                    LOGGER.debug(
-                        "QWeather endpoint %s refresh failed (%s)",
-                        category,
-                        type(res).__name__,
-                    )
-
-            if success_any:
-                if self._consecutive_failures > 0:
-                    LOGGER.info("和风天气：通信已恢复正常，回归标准刷新频率")
-                self._consecutive_failures = 0
-                self.update_interval = self._base_interval
+        results = await asyncio.gather(*tasks.values(), return_exceptions=True)
+        for category, response in zip(tasks, results, strict=True):
+            if self._response_succeeded(response):
+                self._cache_data[category] = dict(response)
+                self._last_success_times[category] = refresh_time
+                self._last_update_results[category] = "success"
             else:
-                raise UpdateFailed("所有 API 抓取任务均失败")
+                self._last_update_results[category] = "failed"
+                LOGGER.debug(
+                    "QWeather endpoint %s refresh failed (%s)",
+                    category,
+                    self._response_failure_type(response),
+                )
 
-        except Exception:
-            self._consecutive_failures += 1
-            # 冷启动保护逻辑
-            if self._cache_data.get("now") and self._consecutive_failures >= 2:
-                self.update_interval = timedelta(hours=1)
-                LOGGER.warning("和风天气：持续连接失败，进入退让模式（1小时/次）")
-            else:
-                self.update_interval = timedelta(minutes=2)
-                LOGGER.debug("和风天气：通信失败，将在 2 分钟后重试...")
+        if not any(self._cache_data[category] is not None for category in CORE_DATASETS):
+            raise UpdateFailed("No core QWeather data snapshots are available")
 
-        # ---数据解析 (组装返回字典) ---
         c = self._cache_data
-        
-        # 安全提取各列表变量 (确保变量在任何语言下都已定义)
-        now_raw = c.get("now", {}).get("now", {})
-        daily_list = c.get("daily", {}).get("daily", [])
-        hourly_list = c.get("hourly", {}).get("hourly", [])
-        air_raw = c.get("air", {})
-        warning_raw = c.get("warning", {}).get("alerts", [])
-        indices_list = c.get("indices", {}).get("daily", [])
+        now_raw = (c.get("now") or {}).get("now", {})
+        daily_list = (c.get("daily") or {}).get("daily", [])
+        hourly_list = (c.get("hourly") or {}).get("hourly", [])
+        air_raw = c.get("air") or {}
+        warning_raw = (c.get("warning") or {}).get("alerts", [])
+        indices_list = (c.get("indices") or {}).get("daily", [])
 
         # 预警深度解析
         parsed_warnings = []
@@ -245,7 +252,7 @@ class QWeatherUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             })
 
         # 针对 V1 空气质量的深度解析逻辑
-        parsed_air = {}
+        parsed_air: dict[str, Any] = {}
         if "indexes" in air_raw and air_raw["indexes"]:
             idx = air_raw["indexes"][0] # 默认取第一项（通常是本地标准）
             
@@ -279,24 +286,23 @@ class QWeatherUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     parsed_air[code] = conc.get("value")
                     parsed_air[f"{code}_unit"] = conc.get("unit")
 
-        # 组装最终返回结构 (确保 0 丢失)
         return {
             "now": {
                 "temp": self._to_f(now_raw.get("temp")),
-                "text_cn": now_raw.get("text", "Unknown"),
-                "condition": CONDITION_MAP.get(now_raw.get("icon"), "exceptional"),
+                "text_cn": now_raw.get("text"),
+                "condition": CONDITION_MAP.get(now_raw.get("icon")) if now_raw.get("icon") else None,
                 "humidity": self._to_f(now_raw.get("humidity")),
                 "pressure": self._to_f(now_raw.get("pressure")),
                 "windSpeed": self._to_f(now_raw.get("windSpeed")),
                 "wind360": self._to_f(now_raw.get("wind360")),
-                "windDir": now_raw.get("windDir", "Unknown"),
+                "windDir": now_raw.get("windDir"),
                 "windScale": now_raw.get("windScale"),
                 "feelsLike": self._to_f(now_raw.get("feelsLike")),
                 "icon": now_raw.get("icon"),
                 "obsTime": now_raw.get("obsTime"),
-                "vis": self._to_f(now_raw.get("vis"), 0.0),
-                "precip": self._to_f(now_raw.get("precip"), 0.0),
-                "cloud": self._to_f(now_raw.get("cloud"), 0.0),
+                "vis": self._to_f(now_raw.get("vis")),
+                "precip": self._to_f(now_raw.get("precip")),
+                "cloud": self._to_f(now_raw.get("cloud")),
                 "dew": self._to_f(now_raw.get("dew")),
             },
             "daily": self._parse_daily(daily_list),
@@ -309,18 +315,20 @@ class QWeatherUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             "minutely_detail": [],
             "nationwide_warnings": nationwide_warnings,
             "weather_abstract": self._generate_smart_abstract(c, now_dt),
-            "update_time": dt_util.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "dataset_status": self._dataset_statuses(refresh_time),
+            "update_time": self._provider_time("now"),
         }
 
     def _generate_smart_abstract(self, c: dict, now_dt: datetime) -> dict[str, Any]:
         """全天候智能语义引擎 - 国际化逻辑版"""
-        now_raw = c.get("now", {}).get("now", {})
-        daily = c.get("daily", {}).get("daily", [])
-        air_raw = c.get("air", {})
-        idx = air_raw.get("indexes", [{}])[0]
+        now_raw = (c.get("now") or {}).get("now", {})
+        daily = (c.get("daily") or {}).get("daily", [])
+        air_raw = c.get("air") or {}
+        indexes = air_raw.get("indexes", [])
+        idx = indexes[0] if isinstance(indexes, list) and indexes else {}
         
         if not daily or len(daily) < 2:
-            return {"display_state": now_raw.get("text", "Loading"), "status": "loading"}
+            return {"display_state": now_raw.get("text"), "status": "unavailable"}
 
         today = daily[0]
         tomorrow = daily[1]
@@ -345,11 +353,17 @@ class QWeatherUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             display_state = tomorrow.get("textDay", "Unknown")
 
         # ---气温趋势监控 (基于今日与明日最高温对比) ---
-        t_max_today = self._to_f(today.get("tempMax"), 0.0)
-        t_max_tomorrow = self._to_f(tomorrow.get("tempMax"), 0.0)
-        diff = t_max_tomorrow - t_max_today
-        
-        if diff >= 5:
+        t_max_today = self._to_f(today.get("tempMax"))
+        t_max_tomorrow = self._to_f(tomorrow.get("tempMax"))
+        diff = (
+            t_max_tomorrow - t_max_today
+            if t_max_today is not None and t_max_tomorrow is not None
+            else None
+        )
+
+        if diff is None:
+            temp_type = "unknown"
+        elif diff >= 5:
             temp_type = "heat_surge"    # 气温剧升
         elif diff >= 2:
             temp_type = "warmer"        # 明显升温
@@ -362,9 +376,11 @@ class QWeatherUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
         # --- 风力判定 (Wind Scale) ---
         # 3级以上视为“有风”
-        wind_scale = int(now_raw.get("windScale", 0))
+        wind_scale = self._to_f(now_raw.get("windScale"))
 
-        if wind_scale == 0:
+        if wind_scale is None:
+            wind_status = "unknown"
+        elif wind_scale == 0:
             wind_status = "no_wind"
         elif wind_scale < 3:
             wind_status = "calm"
@@ -373,9 +389,11 @@ class QWeatherUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
         # --- 空气质量等级 (AQI Level) ---
         # 即使 category 是中文，我们也可以根据 aqi 数值输出逻辑 key
-        aqi_val = self._to_f(idx.get("aqi"), 0.0)
+        aqi_val = self._to_f(idx.get("aqi"))
 
-        if aqi_val <= 50:
+        if aqi_val is None:
+            aqi_level = "unknown"
+        elif aqi_val <= 50:
             aqi_level = "good"
         elif aqi_val <= 100:
             aqi_level = "moderate"
@@ -391,7 +409,11 @@ class QWeatherUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             "period": period, 
             "tonight_text": display_state,
             "temp_change_type": temp_type,
-            "current_temp": int(self._to_f(now_raw.get("temp"), 0)),
+            "current_temp": (
+                int(current_temp)
+                if (current_temp := self._to_f(now_raw.get("temp"))) is not None
+                else None
+            ),
             "wind_status": wind_status, 
             "aqi_level": aqi_level, 
         }
@@ -399,53 +421,52 @@ class QWeatherUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     # --- 解析辅助方法 (逻辑下沉) ---
     def _parse_daily(self, data: list) -> list:
         return [{
-            # 时间轴
-            "datetime": f"{d.get('fxDate')}T00:00:00",
-            # 天气状况 (昼/夜)
-            "condition": CONDITION_MAP.get(d.get("iconDay"), "exceptional"),
-            "condition_night": CONDITION_MAP.get(d.get("iconNight"), "exceptional"),
+            "datetime": (
+                f"{d['fxDate']}T00:00:00" if d.get("fxDate") else None
+            ),
+            "condition": (
+                CONDITION_MAP.get(d["iconDay"]) if d.get("iconDay") else None
+            ),
+            "condition_night": (
+                CONDITION_MAP.get(d["iconNight"]) if d.get("iconNight") else None
+            ),
             "icon": d.get("iconDay"),
             "icon_night": d.get("iconNight"),
-            "text": d.get("textDay", "Unknown"),
-            "text_night": d.get("textNight", "Unknown"),
-            # 温度数值
-            "native_temperature": self._to_f(d.get("tempMax"), 0.0),
-            "native_templow": self._to_f(d.get("tempMin"), 0.0),
-            #  风力详情 (白天)
-            "wind_360_day": self._to_f(d.get("wind360Day"), 0.0),
+            "text": d.get("textDay"),
+            "text_night": d.get("textNight"),
+            "native_temperature": self._to_f(d.get("tempMax")),
+            "native_templow": self._to_f(d.get("tempMin")),
+            "native_precipitation": self._to_f(d.get("precip")),
+            "wind_360_day": self._to_f(d.get("wind360Day")),
             "wind_dir_day": d.get("windDirDay"),
             "wind_scale_day": d.get("windScaleDay"),
-            "native_wind_speed": self._to_f(d.get("windSpeedDay"), 0.0),
-            # 风力详情 (夜间)
-            "wind_360_night": self._to_f(d.get("wind360Night"), 0.0),
+            "native_wind_speed": self._to_f(d.get("windSpeedDay")),
+            "wind_360_night": self._to_f(d.get("wind360Night")),
             "wind_dir_night": d.get("windDirNight"),
             "wind_scale_night": d.get("windScaleNight"),
-            "wind_speed_night": self._to_f(d.get("windSpeedNight"), 0.0),
-            # 太阳天文 
+            "wind_speed_night": self._to_f(d.get("windSpeedNight")),
             "sunrise": d.get("sunrise"),
             "sunset": d.get("sunset"),
-            # 月亮天文 
             "moonrise": d.get("moonrise"),
             "moonset": d.get("moonset"),
             "moon_phase": d.get("moonPhase"),
             "moon_phase_icon": d.get("moonPhaseIcon"),
-            # 气象环境参数
-            "humidity": self._to_f(d.get("humidity"), 0.0),
-            "native_precipitation": self._to_f(d.get("precip"), 0.0),
-            "pressure": self._to_f(d.get("pressure"), 0.0),
-            "vis": self._to_f(d.get("vis"), 0.0),
-            "cloud": self._to_f(d.get("cloud"), 0.0),
+            "humidity": self._to_f(d.get("humidity")),
+            "pressure": self._to_f(d.get("pressure")),
+            "vis": self._to_f(d.get("vis")),
+            "cloud": self._to_f(d.get("cloud")),
             "uv_index": d.get("uvIndex"),
         } for d in data]
 
     def _parse_hourly(self, data: list) -> list:
         return [{
             "datetime": d.get("fxTime"),
-            "native_temperature": self._to_f(d.get("temp"), 0.0),
-            "condition": CONDITION_MAP.get(d.get("icon"), "exceptional"),
+            "native_temperature": self._to_f(d.get("temp")),
+            "native_precipitation": self._to_f(d.get("precip")),
+            "condition": CONDITION_MAP.get(d["icon"]) if d.get("icon") else None,
             "icon": d.get("icon"),
-            "text": d.get("text", "Unknown"),
-            "precipitation_probability": self._to_f(d.get("pop"), 0.0),
+            "text": d.get("text"),
+            "precipitation_probability": self._to_f(d.get("pop")),
         } for d in data]
 
     def _parse_indices(self, data: list) -> list:

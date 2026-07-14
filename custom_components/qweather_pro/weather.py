@@ -152,6 +152,7 @@ class HeFengWeather(CoordinatorEntity[QWeatherUpdateCoordinator], WeatherEntity)
         attrs = {
             "attribution": ATTRIBUTION,
             "city": data.get("city"),
+            "dataset_status": data.get("dataset_status", {}),
             "qweather_icon": now.get("icon"),
             "update_time": data.get("update_time"),
             "obs_time": now.get("obsTime"),
