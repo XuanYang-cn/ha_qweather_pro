@@ -15,7 +15,8 @@ Go to the QWeather Console:
 2. Search for and select QWeather Pro.
 3. Fill in the following basic information:
    - API server address: `API host`
-   - Location: automatically uses HA’s default latitude/longitude (WGS‑84 supported)
+   - Location: the verified Shanghai city or a coordinate; coordinates are
+     quantized before provider lookup.
 4. The integration automatically generates a Public Key for JWT authentication:
    - Copy this public key
    - Paste it into the credential settings in the QWeather Console
@@ -26,13 +27,14 @@ Go to the QWeather Console:
 The integration does not auto-register the bundled upstream card or custom
 more-info UI. Use the repository-owned outdoor weather summary in Home Assistant.
 
-### Optional Configuration (UI Options)
+### Fixed first-version data contract
 
-#### Click “Options” on the integration page to adjust in real time:
-
-- Data update interval: 5–1440 minutes
-- Forecast days/hours: compatible with both free and paid API tiers
+- Current conditions refresh every 10 minutes.
+- Hourly forecast, daily forecast, and AQI refresh every 60 minutes.
+- Forecasts request 24 hours and 7 days.
 - Standard city weather is fixed on; grid weather and minute precipitation are disabled.
+- Each core dataset publishes its own provider time, latest-success time,
+  update result, and fresh/stale/unavailable state through `dataset_status`.
 
 ### 🛠️ Sensor List
 

@@ -21,9 +21,9 @@ from custom_components.qweather_pro.const import (
 def test_first_version_options_disable_grid_and_upstream_ui() -> None:
     options = first_version_options(
         {
-            CONF_UPDATE_INTERVAL: 10,
-            CONF_DAILYSTEPS: "7",
-            CONF_HOURLYSTEPS: "24",
+            CONF_UPDATE_INTERVAL: 5,
+            CONF_DAILYSTEPS: "3",
+            CONF_HOURLYSTEPS: "72",
             CONF_GIRD: True,
             CONF_CUSTOM_UI: True,
         }

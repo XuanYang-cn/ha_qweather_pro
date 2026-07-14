@@ -41,9 +41,12 @@ from .location import (
 
 
 def first_version_options(options: dict[str, Any]) -> dict[str, Any]:
-    """Force the first fork version onto its supported data and UI modes."""
+    """Force the first fork version onto its fixed data and UI contract."""
     return {
         **options,
+        CONF_UPDATE_INTERVAL: DEFAULT_UPDATE_INTERVAL,
+        CONF_DAILYSTEPS: "7",
+        CONF_HOURLYSTEPS: "24",
         CONF_GIRD: False,
         CONF_CUSTOM_UI: False,
     }
@@ -415,34 +418,7 @@ class QWeatherOptionsFlow(config_entries.OptionsFlow):
                 data=first_version_options(user_input),
             )
 
-        options = self.config_entry.options
-
         return self.async_show_form(
             step_id="init",
-            data_schema=vol.Schema({
-                vol.Required(
-                    CONF_UPDATE_INTERVAL, 
-                    default=options.get(CONF_UPDATE_INTERVAL, DEFAULT_UPDATE_INTERVAL)
-                ): selector.NumberSelector(
-                    selector.NumberSelectorConfig(min=5, max=1440, step=1, mode=selector.NumberSelectorMode.BOX)
-                ),
-                vol.Required(
-                    CONF_DAILYSTEPS, 
-                    default=str(options.get(CONF_DAILYSTEPS, 7))
-                ): selector.SelectSelector(
-                    selector.SelectSelectorConfig(
-                        options=["3", "7", "10", "15", "30"],
-                        mode=selector.SelectSelectorMode.DROPDOWN
-                    )
-                ),
-                vol.Required(
-                    CONF_HOURLYSTEPS, 
-                    default=str(options.get(CONF_HOURLYSTEPS, 24))
-                ): selector.SelectSelector(
-                    selector.SelectSelectorConfig(
-                        options=["24", "72", "168"],
-                        mode=selector.SelectSelectorMode.DROPDOWN
-                    )
-                ),
-            }),
+            data_schema=vol.Schema({}),
         )

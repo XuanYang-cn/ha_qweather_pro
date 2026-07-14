@@ -4,7 +4,7 @@
     "step": {
       "user": {
         "title": "Add New City",
-        "description": "It appears that you have already configured QWeather. You may choose to **‘Use a new account’** or directly **‘Reuse the existing account’** information.\r\n**Note:** Adding multiple cities under the same **API Host** will multiply the request volume. Please extend the update interval appropriately to avoid exceeding limits.",
+        "description": "It appears that you have already configured QWeather. You may choose to **‘Use a new account’** or directly **‘Reuse the existing account’** information.\r\n**Note:** Adding multiple cities under the same **API Host** multiplies request volume. This first fork version uses fixed refresh intervals.",
         "data": {
           "account_selection": "Account/Credential Reuse"
         }
@@ -83,12 +83,7 @@
     "step": {
       "init": {
         "title": "Integration Options",
-        "description": "Adjust the daily and hourly forecast ranges. This fork always uses standard city weather; grid weather and the upstream custom UI are disabled.",
-        "data": {
-          "update_interval": "Update Interval (minutes)",
-          "dailysteps": "Daily Forecast Days (3-30)",
-          "hourlysteps": "Hourly Forecast Hours (24-168)"
-        }
+        "description": "This first fork version uses a fixed contract: current weather refreshes every 10 minutes; hourly, daily, and AQI data refresh every 60 minutes; forecasts include 24 hours and 7 days. It always uses standard city weather, with grid weather and the upstream custom UI disabled."
       }
     }
   },
