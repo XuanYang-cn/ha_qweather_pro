@@ -276,8 +276,8 @@ class QWeatherUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     provider_timestamp,
                     refresh_time,
                 ):
-                    self._cache_data[category] = dict(response)
-                    self._latest_provider_times[category] = provider_timestamp
+                    if self._cache_data[category] is None:
+                        self._cache_data[category] = dict(response)
                     self._last_update_results[category] = "stale"
                 else:
                     self._cache_data[category] = dict(response)

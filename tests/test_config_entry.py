@@ -391,6 +391,70 @@ async def test_future_provider_observation_is_stale_on_first_refresh(
     }
 
 
+async def test_valid_observation_recovers_after_a_rejected_future_timestamp(
+    hass,
+    monkeypatch,
+) -> None:
+    """A rejected future timestamp cannot block a later valid provider update."""
+    qweather = FakeQWeatherClient()
+    qweather.responses["now"]["now"]["obsTime"] = "2026-07-14T08:01+08:00"
+    _patch_provider_clients(
+        monkeypatch,
+        ProviderClients(
+            qweather=qweather,
+            nationwide_warnings=FakeNationwideWarningClient({}),
+        ),
+    )
+    entry = _config_entry()
+
+    assert await integration.async_setup_entry(hass, entry)
+    coordinator = entry.runtime_data
+    clock = MutableClock(datetime(2026, 7, 14, tzinfo=timezone.utc))
+    monkeypatch.setattr(coordinator, "_now", clock.now)
+    qweather.responses["now"]["now"]["obsTime"] = "2026-07-14T08:10+08:00"
+    clock.advance(timedelta(minutes=10))
+
+    await coordinator.async_refresh()
+
+    assert coordinator.data["dataset_status"]["now"]["state"] == "fresh"
+    assert coordinator.data["dataset_status"]["now"]["last_update_result"] == "success"
+
+
+async def test_future_observation_preserves_last_snapshot_then_recovers(
+    hass,
+    monkeypatch,
+) -> None:
+    """A bad future response neither replaces nor blocks the good observation."""
+    qweather = FakeQWeatherClient()
+    _patch_provider_clients(
+        monkeypatch,
+        ProviderClients(
+            qweather=qweather,
+            nationwide_warnings=FakeNationwideWarningClient({}),
+        ),
+    )
+    entry = _config_entry()
+
+    assert await integration.async_setup_entry(hass, entry)
+    coordinator = entry.runtime_data
+    clock = MutableClock(datetime(2026, 7, 14, tzinfo=timezone.utc))
+    monkeypatch.setattr(coordinator, "_now", clock.now)
+    qweather.responses["now"]["now"]["obsTime"] = "2026-07-14T08:11+08:00"
+    clock.advance(timedelta(minutes=10))
+
+    await coordinator.async_refresh()
+
+    assert coordinator.data["now"]["obsTime"] == "2026-07-14T08:00+08:00"
+    assert coordinator.data["dataset_status"]["now"]["state"] == "stale"
+
+    qweather.responses["now"]["now"]["obsTime"] = "2026-07-14T08:20+08:00"
+    clock.advance(timedelta(minutes=10))
+    await coordinator.async_refresh()
+
+    assert coordinator.data["now"]["obsTime"] == "2026-07-14T08:20+08:00"
+    assert coordinator.data["dataset_status"]["now"]["state"] == "fresh"
+
+
 @pytest.mark.parametrize("category", ["daily", "hourly", "air"])
 async def test_dataset_freshness_expires_with_provider_time(
     hass,
