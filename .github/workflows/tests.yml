@@ -3,6 +3,7 @@ name: Test personal fork
 on:
   push:
     branches: [main, "maint/**"]
+    tags: ["v*-yx.*"]
   pull_request:
   workflow_dispatch:
 

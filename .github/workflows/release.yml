@@ -2,10 +2,7 @@ name: Auto Release Draft (Strict Version Check)
 
 on:
   push:
-    branches: [main]
-    paths:
-      - 'custom_components/**/manifest.json'
-  workflow_dispatch:
+    tags: ["v*-yx.*"]
 
 permissions:
   contents: write
@@ -19,7 +16,7 @@ jobs:
         with:
           fetch-depth: 0 # 必须获取所有历史和标签
 
-      - name: Version Increment Check
+      - name: Verify release tag matches the manifest
         id: check
         run: |
           # 1. 自动定位集成目录和 manifest 文件
@@ -27,39 +24,15 @@ jobs:
           COMPONENT_NAME=$(basename $(dirname $MANIFEST_FILE))
           NEW_VERSION=$(python3 -c "import json; print(json.load(open('$MANIFEST_FILE'))['version'])")
           
-          # 2. 只比较同一上游基线的 fork tag；上游的较高版本不能阻止
-          #    当前基线的 yx.N 候选发布。
-          BASE_VERSION=${NEW_VERSION%-yx.*}
-          LATEST_TAG=$(git tag -l "v${BASE_VERSION}-yx.*" --sort=-version:refname | head -n 1)
-          if [ -z "$LATEST_TAG" ]; then LATEST_TAG="v${BASE_VERSION}"; fi
-          OLD_VERSION=${LATEST_TAG#v} # 去掉 v 前缀
-
-          echo "检测到新版本: $NEW_VERSION"
-          echo "检测到旧版本: $OLD_VERSION"
-
-          # 3. 比较本 fork 的发布格式：X.Y.Z-yx.N 在相同上游版本中按 N 递增，
-          #    且高于未带本 fork 后缀的上游 tag。
-          IS_INCREASED=$(python3 -c "import re; p=lambda v: (lambda m: (int(m[1]), int(m[2]), int(m[3]), 1 if m[4] else 0, int(m[4] or 0)))(re.fullmatch(r'(\\d+)\\.(\\d+)\\.(\\d+)(?:-yx\\.(\\d+))?', v) or (_ for _ in ()).throw(ValueError(f'invalid fork version: {v}'))); print(p('$NEW_VERSION') > p('$OLD_VERSION'))")
-
-          if [ "$IS_INCREASED" = "True" ]; then
-            echo "compare_result=success" >> $GITHUB_OUTPUT
-            echo "version=$NEW_VERSION" >> $GITHUB_OUTPUT
-            echo "comp_name=$COMPONENT_NAME" >> $GITHUB_OUTPUT
-            
-            # 获取最新 Commit 标题作为 Release 标题的一部分
-            COMMIT_TITLE=$(git log -1 --pretty=format:"%s")
-            echo "commit_title=$COMMIT_TITLE" >> $GITHUB_OUTPUT
-
-            # 判断是否为预览版
-            if [[ $NEW_VERSION == *"beta"* ]] || [[ $NEW_VERSION == *"rc"* ]] || [[ $NEW_VERSION == *"alpha"* ]]; then
-              echo "is_prerelease=true" >> $GITHUB_OUTPUT
-            else
-              echo "is_prerelease=false" >> $GITHUB_OUTPUT
-            fi
-          else
-            echo "compare_result=skip" >> $GITHUB_OUTPUT
-            echo "❌ 错误：新版本 $NEW_VERSION 并不大于旧版本 $OLD_VERSION。跳过发布。"
+          if [ "v$NEW_VERSION" != "$GITHUB_REF_NAME" ]; then
+            echo "Tag $GITHUB_REF_NAME does not match manifest version $NEW_VERSION" >&2
+            exit 1
           fi
+          echo "compare_result=success" >> $GITHUB_OUTPUT
+          echo "version=$NEW_VERSION" >> $GITHUB_OUTPUT
+          echo "comp_name=$COMPONENT_NAME" >> $GITHUB_OUTPUT
+          echo "commit_title=$(git log -1 --pretty=format:'%s')" >> $GITHUB_OUTPUT
+          echo "is_prerelease=false" >> $GITHUB_OUTPUT
 
       - name: Create ZIP file
         if: steps.check.outputs.compare_result == 'success'
