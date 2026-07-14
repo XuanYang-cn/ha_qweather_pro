@@ -29,7 +29,7 @@ jobs:
             exit 1
           fi
           BASE_VERSION=${NEW_VERSION%-yx.*}
-          MAINTENANCE_BRANCH="maint/${BASE_VERSION}-yx"
+          MAINTENANCE_BRANCH="maint/v${BASE_VERSION}-yx"
           git fetch origin "$MAINTENANCE_BRANCH"
           if [ "$(git rev-parse HEAD)" != "$(git rev-parse "origin/$MAINTENANCE_BRANCH")" ]; then
             echo "Tag must point at the current $MAINTENANCE_BRANCH head" >&2
