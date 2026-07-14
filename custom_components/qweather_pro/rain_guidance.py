@@ -16,6 +16,7 @@ RAIN_ICON_CODES = frozenset(
 RAIN_CONDITIONS = frozenset(
     {"rainy", "pouring", "lightning-rainy", "snowy-rainy"}
 )
+INTERPRETABLE_WEATHER_CODES = frozenset(CONDITION_MAP) - {"999"}
 
 
 def _as_datetime(value: object) -> datetime | None:
@@ -52,8 +53,7 @@ def _has_rain_evidence(hour: Mapping[str, object]) -> bool:
 
 def _first_remaining_hour(now: datetime) -> datetime:
     """Return the first forecast hour whose value is still relevant."""
-    hour_start = now.replace(minute=0, second=0, microsecond=0)
-    return hour_start if now == hour_start else hour_start + timedelta(hours=1)
+    return now.replace(minute=0, second=0, microsecond=0)
 
 
 def _expected_hours(start: datetime, end: datetime) -> set[datetime]:
@@ -68,7 +68,7 @@ def _expected_hours(start: datetime, end: datetime) -> set[datetime]:
 
 def _has_interpretable_weather_code(hour: Mapping[str, object]) -> bool:
     """Confirm the provider supplied a weather code this integration understands."""
-    return str(hour.get("icon")) in CONDITION_MAP
+    return str(hour.get("icon")) in INTERPRETABLE_WEATHER_CODES
 
 
 def daily_rain_guidance(

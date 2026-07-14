@@ -24,7 +24,7 @@ def hour(
 def hours_until_day_end(
     *,
     date: str = "2026-07-14",
-    first_hour: int = 11,
+    first_hour: int = 10,
 ) -> list[dict[str, object]]:
     return [
         hour(f"{date}T{forecast_hour:02d}:00:00+08:00")
@@ -43,7 +43,7 @@ def test_30_percent_hits_but_29_does_not() -> None:
         == "rain_expected"
     )
     no_rain = hours_until_day_end()
-    no_rain[0] = hour("2026-07-14T11:00:00+08:00", pop=29)
+    no_rain[0] = hour("2026-07-14T10:00:00+08:00", pop=29)
     assert daily_rain_guidance(no_rain, {"state": "fresh"}, now)["state"] == (
         "no_rain_expected"
     )
@@ -64,17 +64,26 @@ def test_tomorrow_does_not_affect_same_day_guidance() -> None:
     )
 
 
-def test_no_remaining_complete_hour_is_not_a_no_rain_confirmation() -> None:
+def test_current_partial_hour_requires_forecast_coverage() -> None:
     now = datetime.fromisoformat("2026-07-14T23:15:00+08:00")
     assert (
         daily_rain_guidance([], {"state": "fresh"}, now)["state"]
         == "unconfirmed"
+    )
+    assert (
+        daily_rain_guidance(
+            [hour("2026-07-14T23:00:00+08:00", icon="305")],
+            {"state": "stale"},
+            now,
+        )["state"]
+        == "rain_expected"
     )
 
 
 def test_only_complete_fresh_hourly_coverage_can_confirm_no_rain() -> None:
     now = datetime.fromisoformat("2026-07-14T21:15:00+08:00")
     complete = [
+        hour("2026-07-14T21:00:00+08:00"),
         hour("2026-07-14T22:00:00+08:00"),
         hour("2026-07-14T23:00:00+08:00"),
     ]
@@ -126,12 +135,23 @@ def test_only_the_expected_hour_timestamps_can_confirm_no_rain() -> None:
     )
 
 
+def test_shanghai_local_date_controls_the_forecast_window() -> None:
+    now = datetime.fromisoformat("2026-07-14T16:15:00+00:00")
+    hourly = [
+        hour("2026-07-14T23:00:00+08:00", pop=100),
+        *hours_until_day_end(date="2026-07-15", first_hour=0),
+    ]
+    assert (
+        daily_rain_guidance(hourly, {"state": "fresh"}, now)["state"]
+        == "no_rain_expected"
+    )
 @pytest.mark.parametrize(
     "invalid_hour",
     [
         hour("2026-07-14T11:00:00+08:00", icon="not-a-qweather-code"),
+        hour("2026-07-14T10:00:00+08:00", icon="999"),
         {"datetime": "invalid-time", "icon": "100"},
-        {"datetime": "2026-07-14T11:00:00+08:00", "icon": None},
+        {"datetime": "2026-07-14T10:00:00+08:00", "icon": None},
     ],
 )
 def test_uninterpretable_hourly_data_never_confirms_no_rain(
