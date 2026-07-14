@@ -58,7 +58,6 @@ QWEATHER_RESPONSES = {
     "warning": {
         "metadata": {
             "tag": "synthetic",
-            "updateTime": "2026-07-14T08:00+08:00",
         },
         "alerts": [],
     },

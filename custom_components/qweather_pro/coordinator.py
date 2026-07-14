@@ -107,6 +107,8 @@ class QWeatherUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             return isinstance(response.get("daily"), list) and len(response["daily"]) >= 7
         if category == "hourly":
             return isinstance(response.get("hourly"), list) and len(response["hourly"]) >= 24
+        if category == "warning":
+            return isinstance(response.get("alerts"), list)
         return True
 
     @staticmethod
@@ -211,6 +213,46 @@ class QWeatherUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         except (TypeError, ValueError):
             return None
 
+    def _store_warning_response(
+        self,
+        response: Mapping[str, Any],
+        refresh_time: datetime,
+    ) -> None:
+        """Accept a usable warning response without conflating it with source age."""
+        provider_time = self._provider_time_from_response("warning", response)
+        provider_timestamp = self._parse_provider_time(provider_time)
+        previous_provider_timestamp = self._latest_provider_times.get("warning")
+        if (
+            provider_timestamp is not None
+            and previous_provider_timestamp is not None
+            and provider_timestamp <= previous_provider_timestamp
+        ):
+            self._last_update_results["warning"] = "unchanged"
+            return
+        if provider_timestamp is not None and not self._provider_time_is_current(
+            "warning",
+            provider_timestamp,
+            refresh_time,
+        ):
+            if self._cache_data["warning"] is None:
+                self._cache_data["warning"] = dict(response)
+            self._last_update_results["warning"] = "stale"
+            return
+
+        incoming_alerts = response["alerts"]
+        cached_alerts = (self._cache_data["warning"] or {}).get("alerts", [])
+        snapshot = dict(response)
+        snapshot["alerts"] = self._merge_warning_alerts(
+            cached_alerts,
+            incoming_alerts,
+            refresh_time,
+        )
+        self._cache_data["warning"] = snapshot
+        self._last_success_times["warning"] = refresh_time
+        self._last_update_results["warning"] = "success"
+        if provider_timestamp is not None:
+            self._latest_provider_times["warning"] = provider_timestamp
+
     async def _async_update_data(self) -> dict[str, Any]:
         """Refresh independent provider datasets without hiding failed snapshots."""
 
@@ -272,6 +314,9 @@ class QWeatherUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         for category, response in zip(tasks, results, strict=True):
             self._last_attempt_times[category] = refresh_time
             if self._response_succeeded(category, response):
+                if category == "warning":
+                    self._store_warning_response(response, refresh_time)
+                    continue
                 provider_time = self._provider_time_from_response(category, response)
                 provider_timestamp = self._parse_provider_time(provider_time)
                 previous_provider_timestamp = self._latest_provider_times.get(category)
@@ -400,8 +445,16 @@ class QWeatherUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         type_name = event_type.get("name") if isinstance(event_type, Mapping) else None
         identity_material = {
             "sender": alert.get("senderName") or alert.get("sender"),
+            "type_code": (
+                event_type.get("id") or event_type.get("code")
+                if isinstance(event_type, Mapping)
+                else None
+            )
+            or alert.get("typeCode")
+            or alert.get("eventCode"),
             "type": type_name or alert.get("typeName") or alert.get("type"),
             "issued": alert.get("issuedTime") or alert.get("pubTime"),
+            "effective": alert.get("effectiveTime") or alert.get("startTime"),
         }
         encoded = json.dumps(
             identity_material,
@@ -410,6 +463,32 @@ class QWeatherUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             separators=(",", ":"),
         )
         return f"qweather-{hashlib.sha256(encoded.encode()).hexdigest()[:16]}"
+
+    @classmethod
+    def _warning_identities(cls, alerts: list[Mapping[str, Any]]) -> list[str]:
+        """Resolve rare fallback-ID collisions deterministically."""
+        base_ids = [cls._warning_identity(alert) for alert in alerts]
+        grouped_indexes: dict[str, list[int]] = {}
+        for index, identity in enumerate(base_ids):
+            grouped_indexes.setdefault(identity, []).append(index)
+
+        identities = list(base_ids)
+        for identity, indexes in grouped_indexes.items():
+            if len(indexes) == 1:
+                continue
+            ordered_indexes = sorted(
+                indexes,
+                key=lambda index: json.dumps(
+                    alerts[index],
+                    ensure_ascii=False,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                    default=str,
+                ),
+            )
+            for position, index in enumerate(ordered_indexes, start=1):
+                identities[index] = f"{identity}-{position}"
+        return identities
 
     def _warning_is_active(
         self,
@@ -428,6 +507,41 @@ class QWeatherUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         expires_at = self._parse_provider_time(expires)
         return expires_at is None or expires_at > now
 
+    def _merge_warning_alerts(
+        self,
+        cached_alerts: object,
+        incoming_alerts: object,
+        now: datetime,
+    ) -> list[dict[str, Any]]:
+        """Retain active warnings unless the provider gives their clear condition."""
+        if not isinstance(incoming_alerts, list):
+            return []
+        if not incoming_alerts:
+            return []
+
+        cached = (
+            [alert for alert in cached_alerts if isinstance(alert, Mapping)]
+            if isinstance(cached_alerts, list)
+            else []
+        )
+        incoming = [alert for alert in incoming_alerts if isinstance(alert, Mapping)]
+        active_alerts: dict[str, dict[str, Any]] = {}
+        order: list[str] = []
+        for alert, identity in zip(cached, self._warning_identities(cached), strict=True):
+            if self._warning_is_active(alert, now):
+                active_alerts[identity] = dict(alert)
+                order.append(identity)
+
+        for alert, identity in zip(incoming, self._warning_identities(incoming), strict=True):
+            if self._warning_is_active(alert, now):
+                active_alerts[identity] = dict(alert)
+                if identity not in order:
+                    order.append(identity)
+            else:
+                active_alerts.pop(identity, None)
+
+        return [active_alerts[identity] for identity in order if identity in active_alerts]
+
     def _parse_local_warnings(
         self,
         alerts: object,
@@ -436,10 +550,17 @@ class QWeatherUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         """Normalize every still-active provider warning without collapsing the list."""
         if not isinstance(alerts, list):
             return []
+        active_alerts = [
+            alert
+            for alert in alerts
+            if isinstance(alert, Mapping) and self._warning_is_active(alert, now)
+        ]
         parsed: list[dict[str, Any]] = []
-        for alert in alerts:
-            if not isinstance(alert, Mapping) or not self._warning_is_active(alert, now):
-                continue
+        for alert, identity in zip(
+            active_alerts,
+            self._warning_identities(active_alerts),
+            strict=True,
+        ):
             event_type = alert.get("eventType")
             type_name = (
                 event_type.get("name") if isinstance(event_type, Mapping) else None
@@ -448,7 +569,7 @@ class QWeatherUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             color = alert.get("color")
             parsed.append(
                 {
-                    "id": self._warning_identity(alert),
+                    "id": identity,
                     "type": type_name,
                     "severity": severity,
                     "title": alert.get("headline") or alert.get("title"),

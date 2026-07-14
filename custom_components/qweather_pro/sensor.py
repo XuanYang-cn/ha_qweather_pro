@@ -59,7 +59,7 @@ def _warning_sensor_value(data: dict[str, Any]) -> str | None:
     """Distinguish a confirmed clear list from warnings that cannot be confirmed."""
     warnings = data.get("warning", [])
     status = data.get("dataset_status", {}).get("warning", {})
-    if status.get("state") in {"unavailable", "stale"} and not warnings:
+    if status.get("last_update_result") != "success" and not warnings:
         return "warning_unconfirmed"
     if warnings:
         return warnings[0].get("title")
