@@ -158,6 +158,41 @@ async def test_concrete_client_rejects_malformed_legacy_records() -> None:
         await client.async_fetch_active_warnings()
 
 
+async def test_concrete_client_decodes_a_top_level_legacy_list() -> None:
+    """A list envelope uses the same positional decoder as the nested feed."""
+    client = ChinaWeatherWarningClient(
+        FakeHTTPSession(
+            [
+                [
+                    "10101010020260714080000002",
+                    "北京市气象台发布大风黄色预警",
+                    "2026-07-14 08:00:00",
+                    "北京市气象台",
+                    "大风",
+                    "黄色",
+                    "北京市",
+                ]
+            ]
+        )
+    )
+
+    snapshot = await client.async_fetch_active_warnings()
+
+    assert snapshot == {
+        "warnings": [
+            {
+                "alarmId": "10101010020260714080000002",
+                "title": "北京市气象台发布大风黄色预警",
+                "issueTime": "2026-07-14 08:00:00",
+                "senderName": "北京市气象台",
+                "signaltype": "大风",
+                "signallevel": "黄色",
+                "provinceName": "北京市",
+            }
+        ]
+    }
+
+
 async def test_nationwide_contract_keeps_all_levels_and_summary(hass, monkeypatch) -> None:
     """Blue/yellow warnings remain in the full list while summary prioritizes risk."""
     client = FakeNationwideWarningClient(

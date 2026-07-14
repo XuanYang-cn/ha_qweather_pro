@@ -92,7 +92,7 @@ class ChinaWeatherWarningClient:
             ) as response:
                 payload = await response.json(content_type=None)
         if isinstance(payload, list):
-            return {"warnings": payload}
+            return {"warnings": [self._decode_warning(record) for record in payload]}
         if not isinstance(payload, Mapping):
             raise ValueError("China Weather returned a non-object warning feed")
         raw_warnings = payload.get(
