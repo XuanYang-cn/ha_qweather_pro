@@ -64,6 +64,23 @@ class ChinaWeatherWarningClient:
         """Use Home Assistant's shared client session without QWeather credentials."""
         self._session = session
 
+    @staticmethod
+    def _decode_warning(record: object) -> dict[str, Any]:
+        """Decode the legacy positional China Weather feed into named fields."""
+        if isinstance(record, Mapping):
+            return dict(record)
+        if not isinstance(record, list) or len(record) < 7:
+            raise ValueError("China Weather warning record had an unknown shape")
+        return {
+            "alarmId": record[0],
+            "title": record[1],
+            "issueTime": record[2],
+            "senderName": record[3],
+            "signaltype": record[4],
+            "signallevel": record[5],
+            "provinceName": record[6],
+        }
+
     async def async_fetch_active_warnings(self) -> dict[str, Any]:
         """Return a narrow snapshot for the isolated nationwide coordinator."""
         async with asyncio.timeout(15):
@@ -78,13 +95,16 @@ class ChinaWeatherWarningClient:
             return {"warnings": payload}
         if not isinstance(payload, Mapping):
             raise ValueError("China Weather returned a non-object warning feed")
-        warnings = payload.get("warnings", payload.get("alerts", payload.get("data", [])))
-        if not isinstance(warnings, list):
+        raw_warnings = payload.get(
+            "warnings",
+            payload.get("alerts", payload.get("data", [])),
+        )
+        if not isinstance(raw_warnings, list):
             raise ValueError("China Weather warning feed did not contain a list")
         return {
             "source": "China Weather",
             "updateTime": payload.get("updateTime") or payload.get("publishTime"),
-            "warnings": warnings,
+            "warnings": [self._decode_warning(record) for record in raw_warnings],
         }
 
 

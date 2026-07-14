@@ -5,6 +5,9 @@ from __future__ import annotations
 import json
 from datetime import datetime, timedelta, timezone
 
+import pytest
+
+from custom_components.qweather_pro.clients import ChinaWeatherWarningClient
 from custom_components.qweather_pro.nationwide_warnings import (
     NationwideWarningCoordinator,
 )
@@ -26,6 +29,37 @@ class MutableClock:
     def advance(self, duration: timedelta) -> None:
         """Move the synthetic time forward."""
         self.value += duration
+
+
+class FakeHTTPResponse:
+    """Async response context for concrete China Weather client tests."""
+
+    def __init__(self, payload: object) -> None:
+        self._payload = payload
+
+    async def __aenter__(self) -> "FakeHTTPResponse":
+        return self
+
+    async def __aexit__(self, _exc_type, _exc, _traceback) -> None:
+        return None
+
+    async def json(self, *, content_type: object) -> object:
+        """Return one synthetic provider JSON payload."""
+        assert content_type is None
+        return self._payload
+
+
+class FakeHTTPSession:
+    """Capture the no-network request contract for the production client."""
+
+    def __init__(self, payload: object) -> None:
+        self._payload = payload
+        self.requests: list[dict[str, object]] = []
+
+    def get(self, url: str, **kwargs: object) -> FakeHTTPResponse:
+        """Record one HTTP request and return a synthetic async response."""
+        self.requests.append({"url": url, **kwargs})
+        return FakeHTTPResponse(self._payload)
 
 
 def _warning(
@@ -58,6 +92,70 @@ def _snapshot(
         "updateTime": provider_time,
         "warnings": warnings,
     }
+
+
+async def test_concrete_client_decodes_legacy_feed_without_network(
+    hass,
+    monkeypatch,
+) -> None:
+    """The public positional feed reaches the coordinator's named contract."""
+    session = FakeHTTPSession(
+        {
+            "count": "1",
+            "data": [
+                [
+                    "10101010020260714080000001",
+                    "北京市气象台发布暴雨蓝色预警[IV/一般]",
+                    "2026-07-14 08:00:00",
+                    "北京市气象台",
+                    "暴雨",
+                    "蓝色",
+                    "北京市",
+                ]
+            ],
+        }
+    )
+    coordinator = NationwideWarningCoordinator(
+        hass,
+        _config_entry(),
+        ChinaWeatherWarningClient(session),
+    )
+    clock = MutableClock(datetime(2026, 7, 14, tzinfo=timezone.utc))
+    monkeypatch.setattr(coordinator, "_now", clock.now)
+
+    await coordinator.async_refresh()
+
+    assert session.requests == [
+        {
+            "url": "https://product.weather.com.cn/alarm/newalarmlist.shtml",
+            "params": {"count": -1},
+            "headers": {"Referer": "https://www.weather.com.cn/"},
+            "raise_for_status": True,
+        }
+    ]
+    assert coordinator.data["warnings"] == [
+        {
+            "id": "10101010020260714080000001",
+            "region": "北京市",
+            "type": "暴雨",
+            "level": "blue",
+            "title": "北京市气象台发布暴雨蓝色预警[IV/一般]",
+            "issued": "2026-07-14 08:00:00",
+            "effective": None,
+            "expires": None,
+            "source": "China Weather",
+        }
+    ]
+    assert coordinator.data["dataset_status"]["provider_time"] is None
+    assert coordinator.data["dataset_status"]["last_update_result"] == "success"
+
+
+async def test_concrete_client_rejects_malformed_legacy_records() -> None:
+    """An unknown provider shape is an explicit isolated failure, not truncation."""
+    client = ChinaWeatherWarningClient(FakeHTTPSession({"data": [["too", "short"]]}))
+
+    with pytest.raises(ValueError, match="unknown shape"):
+        await client.async_fetch_active_warnings()
 
 
 async def test_nationwide_contract_keeps_all_levels_and_summary(hass, monkeypatch) -> None:

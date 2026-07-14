@@ -248,7 +248,10 @@ class NationwideWarningSummarySensor(NationwideWarningSensor):
     def native_value(self) -> str:
         """Return the highest active color level or a truthful availability state."""
         data = self.coordinator.data
-        if data["dataset_status"]["state"] == "unavailable":
+        if (
+            data["dataset_status"]["last_update_result"] != "success"
+            and not data["warnings"]
+        ):
             return "unavailable"
         return data["summary"]["highest_level"]
 

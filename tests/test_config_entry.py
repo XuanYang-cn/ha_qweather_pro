@@ -140,7 +140,6 @@ async def test_full_config_entry_uses_programmable_offline_clients(
     qweather = FakeQWeatherClient()
     nationwide_snapshot = {
         "source": "China Weather",
-        "updateTime": "2026-07-14T08:00+08:00",
         "warnings": [
             {
                 "alarmId": "synthetic-warning",
@@ -190,6 +189,9 @@ async def test_full_config_entry_uses_programmable_offline_clients(
         "orange_red_count": 1,
         "highest_level": "orange",
     }
+    assert entry.runtime_data.nationwide_warning_coordinator.data["dataset_status"][
+        "state"
+    ] == "unavailable"
     assert len(entities) == 8
     assert {entity.unique_id for entity in entities} == {
         f"{entry.entry_id}_aqi",
