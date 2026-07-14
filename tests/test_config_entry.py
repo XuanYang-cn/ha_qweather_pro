@@ -45,6 +45,23 @@ class MutableClock:
         self.value += duration
 
 
+def _advance_provider_timestamps(
+    qweather: FakeQWeatherClient,
+    *,
+    excluded: str | None = None,
+) -> None:
+    """Give successful fake datasets a newly published provider timestamp."""
+    timestamp = "2026-07-14T09:00+08:00"
+    if excluded != "now":
+        qweather.responses["now"]["now"]["obsTime"] = timestamp
+    if excluded != "daily":
+        qweather.responses["daily"]["updateTime"] = timestamp
+    if excluded != "hourly":
+        qweather.responses["hourly"]["updateTime"] = timestamp
+    if excluded != "air":
+        qweather.responses["air"]["indexes"][0]["pubTime"] = timestamp
+
+
 def _config_entry() -> ConfigEntry:
     return ConfigEntry(
         data={
@@ -255,6 +272,36 @@ async def test_weather_datasets_keep_independent_stale_and_recovery_states(
     assert coordinator.data["now"]["temp"] == 25.0
 
 
+async def test_unchanged_provider_observation_remains_stale(
+    hass,
+    monkeypatch,
+) -> None:
+    """A repeated provider observation cannot become fresh by being re-fetched."""
+    qweather = FakeQWeatherClient()
+    clients = ProviderClients(
+        qweather=qweather,
+        nationwide_warnings=FakeNationwideWarningClient({}),
+    )
+    _patch_provider_clients(monkeypatch, clients)
+    entry = _config_entry()
+
+    assert await integration.async_setup_entry(hass, entry)
+    coordinator = entry.runtime_data
+    initial_status = coordinator.data["dataset_status"]["now"]
+    clock = MutableClock(datetime.fromisoformat(initial_status["last_success_time"]))
+    monkeypatch.setattr(coordinator, "_now", clock.now)
+    clock.advance(timedelta(minutes=10))
+
+    await coordinator.async_refresh()
+
+    assert coordinator.data["dataset_status"]["now"] == {
+        "provider_time": "2026-07-14T08:00+08:00",
+        "last_success_time": initial_status["last_success_time"],
+        "last_update_result": "unchanged",
+        "state": "stale",
+    }
+
+
 async def test_refresh_schedule_uses_fixed_10_and_60_minute_contract(
     hass,
     monkeypatch,
@@ -335,6 +382,57 @@ async def test_all_core_endpoint_failures_without_snapshots_block_entry_setup(
 
     with pytest.raises(ConfigEntryNotReady):
         await integration.async_setup_entry(hass, _config_entry())
+
+
+async def test_timeout_without_snapshots_blocks_entry_setup(
+    hass,
+    monkeypatch,
+) -> None:
+    """A cold network timeout has no usable snapshot to expose."""
+    qweather = FakeQWeatherClient()
+    for category in ("now", "daily", "hourly", "air"):
+        qweather.responses[category] = asyncio.TimeoutError()
+    _patch_provider_clients(
+        monkeypatch,
+        ProviderClients(
+            qweather=qweather,
+            nationwide_warnings=FakeNationwideWarningClient({}),
+        ),
+    )
+
+    with pytest.raises(ConfigEntryNotReady):
+        await integration.async_setup_entry(hass, _config_entry())
+
+
+async def test_cached_auth_error_marks_only_the_current_dataset_stale(
+    hass,
+    monkeypatch,
+) -> None:
+    """An authentication response retains the last observation as stale data."""
+    qweather = FakeQWeatherClient()
+    clients = ProviderClients(
+        qweather=qweather,
+        nationwide_warnings=FakeNationwideWarningClient({}),
+    )
+    _patch_provider_clients(monkeypatch, clients)
+    entry = _config_entry()
+
+    assert await integration.async_setup_entry(hass, entry)
+    coordinator = entry.runtime_data
+    initial_success = coordinator.data["dataset_status"]["now"]["last_success_time"]
+    clock = MutableClock(datetime.fromisoformat(initial_success))
+    monkeypatch.setattr(coordinator, "_now", clock.now)
+    qweather.responses["now"] = {"code": "401"}
+    clock.advance(timedelta(minutes=10))
+
+    await coordinator.async_refresh()
+
+    assert coordinator.data["dataset_status"]["now"] == {
+        "provider_time": "2026-07-14T08:00+08:00",
+        "last_success_time": initial_success,
+        "last_update_result": "failed",
+        "state": "stale",
+    }
 
 
 async def test_all_core_failures_keep_each_existing_snapshot_stale(
@@ -460,6 +558,7 @@ async def test_one_endpoint_failure_does_not_mask_other_dataset_states(
     )
     monkeypatch.setattr(coordinator, "_now", clock.now)
     qweather.responses[category] = {"code": "429"}
+    _advance_provider_timestamps(qweather, excluded=category)
     clock.advance(elapsed)
 
     await coordinator.async_refresh()

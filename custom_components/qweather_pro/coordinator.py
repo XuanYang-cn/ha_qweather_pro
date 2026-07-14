@@ -114,9 +114,12 @@ class QWeatherUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             return f"response-{response.get('code', 'invalid')}"
         return type(response).__name__
 
-    def _provider_time(self, category: str) -> str | None:
-        """Read a provider timestamp from a cached response without inventing one."""
-        response = self._cache_data.get(category)
+    @staticmethod
+    def _provider_time_from_response(
+        category: str,
+        response: Mapping[str, Any] | None,
+    ) -> str | None:
+        """Read an authoritative provider timestamp without inventing one."""
         if not isinstance(response, Mapping):
             return None
         if category == "now":
@@ -131,6 +134,10 @@ class QWeatherUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             return metadata.get("updateTime") or metadata.get("publishTime")
         return response.get("updateTime") or response.get("publishTime")
 
+    def _provider_time(self, category: str) -> str | None:
+        """Read a provider timestamp from the retained dataset snapshot."""
+        return self._provider_time_from_response(category, self._cache_data.get(category))
+
     def _dataset_statuses(self, now: datetime) -> dict[str, dict[str, str | None]]:
         """Publish independent freshness and result state for each core dataset."""
         statuses: dict[str, dict[str, str | None]] = {}
@@ -140,7 +147,7 @@ class QWeatherUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             provider_time = self._provider_time(category)
             if self._cache_data[category] is None or last_success is None:
                 state = "unavailable"
-            elif result == "failed" or now - last_success >= DATASET_INTERVALS[category]:
+            elif result in {"failed", "unchanged"} or now - last_success >= DATASET_INTERVALS[category]:
                 state = "stale"
             elif provider_time is None:
                 state = "unavailable"
@@ -222,9 +229,24 @@ class QWeatherUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         for category, response in zip(tasks, results, strict=True):
             self._last_attempt_times[category] = refresh_time
             if self._response_succeeded(category, response):
-                self._cache_data[category] = dict(response)
-                self._last_success_times[category] = refresh_time
-                self._last_update_results[category] = "success"
+                provider_time = self._provider_time_from_response(category, response)
+                previous_provider_time = self._provider_time(category)
+                if category in CORE_DATASETS and (
+                    provider_time is None
+                    or (
+                        previous_provider_time is not None
+                        and provider_time == previous_provider_time
+                    )
+                ):
+                    if previous_provider_time is None:
+                        self._cache_data[category] = dict(response)
+                        self._last_update_results[category] = "unavailable"
+                    else:
+                        self._last_update_results[category] = "unchanged"
+                else:
+                    self._cache_data[category] = dict(response)
+                    self._last_success_times[category] = refresh_time
+                    self._last_update_results[category] = "success"
             else:
                 self._last_update_results[category] = "failed"
                 LOGGER.debug(
