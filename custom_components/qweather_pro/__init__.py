@@ -3,9 +3,10 @@ from __future__ import annotations
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import ConfigEntryAuthFailed
 from homeassistant.loader import async_get_integration
 
-from .clients import create_provider_clients
+from .clients import JWTConfigurationError, create_provider_clients
 from .const import DOMAIN, PLATFORMS
 from .coordinator import QWeatherUpdateCoordinator
 
@@ -17,7 +18,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: QWeatherConfigEntry) -> 
     integration = await async_get_integration(hass, DOMAIN)
     version = str(integration.version) if integration.version else "1.0.0"
 
-    clients = create_provider_clients(hass, entry)
+    try:
+        clients = create_provider_clients(hass, entry)
+    except JWTConfigurationError as error:
+        raise ConfigEntryAuthFailed(
+            "QWeather Pro requires JWT/Ed25519 reconfiguration"
+        ) from error
     coordinator = QWeatherUpdateCoordinator(hass, entry, version, clients)
     
     # 执行初次刷新获取数据

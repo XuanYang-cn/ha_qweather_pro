@@ -27,18 +27,14 @@ class QWeatherAPI:
     """和风天气 API 高级封装客户端."""
 
     def __init__(
-        self, 
-        session: ClientSession, 
-        api_key: str | None = None,
-        use_token: bool = False,
+        self,
+        session: ClientSession,
         project_id: str | None = None,
         key_id: str | None = None,
         private_key: str | None = None,
-        host: str | None = None
+        host: str | None = None,
     ) -> None:
         self.session = session
-        self.api_key = api_key
-        self.use_token = use_token
         self.project_id = project_id
         self.key_id = key_id
         self.private_key = private_key
@@ -103,12 +99,10 @@ class QWeatherAPI:
             "Accept-Encoding": "gzip"
         }
 
-        if self.use_token:
-            token = self._generate_jwt()
-            if token:
-                headers["Authorization"] = f"Bearer {token}"
-        else:
-            headers["X-QW-Api-Key"] = self.api_key
+        token = self._generate_jwt()
+        if token is None:
+            raise ValueError("QWeather JWT signing failed")
+        headers["Authorization"] = f"Bearer {token}"
 
         try:
             async with asyncio.timeout(15):

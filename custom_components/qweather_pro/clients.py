@@ -13,12 +13,15 @@ from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
 from .api import QWeatherAPI
 from .const import (
-    CONF_API_KEY,
     CONF_KEY_ID,
     CONF_PRIVATE_KEY,
     CONF_PROJECT_ID,
     CONF_USE_TOKEN,
 )
+
+
+class JWTConfigurationError(ValueError):
+    """Raised when an entry cannot use the fork's JWT-only provider path."""
 
 
 class NationwideWarningClient(Protocol):
@@ -74,16 +77,28 @@ def create_qweather_client(
     hass: HomeAssistant,
     config_data: Mapping[str, Any],
 ) -> QWeatherAPI:
-    """Create one QWeather client from private Home Assistant config data."""
+    """Create the JWT-only QWeather client from private entry data."""
     configured_host = config_data.get(CONF_HOST)
+    project_id = config_data.get(CONF_PROJECT_ID)
+    key_id = config_data.get(CONF_KEY_ID)
+    private_key = config_data.get(CONF_PRIVATE_KEY)
+    if (
+        config_data.get(CONF_USE_TOKEN) is not True
+        or not all(
+            isinstance(value, str) and value.strip()
+            for value in (configured_host, project_id, key_id, private_key)
+        )
+    ):
+        raise JWTConfigurationError(
+            "QWeather Pro requires a JWT/Ed25519 credential configuration"
+        )
+
     return QWeatherAPI(
         session=async_get_clientsession(hass),
-        api_key=config_data.get(CONF_API_KEY),
-        use_token=config_data.get(CONF_USE_TOKEN),
-        project_id=config_data.get(CONF_PROJECT_ID),
-        key_id=config_data.get(CONF_KEY_ID),
-        private_key=config_data.get(CONF_PRIVATE_KEY),
-        host=str(configured_host).strip() if configured_host is not None else None,
+        project_id=project_id.strip(),
+        key_id=key_id.strip(),
+        private_key=private_key,
+        host=configured_host.strip(),
     )
 
 

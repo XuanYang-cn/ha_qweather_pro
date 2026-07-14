@@ -43,7 +43,7 @@ ATTR_SUGGESTION: Final = "suggestion"
 
 # --- 默认值 ---
 DEFAULT_NAME: Final = "和风天气Pro"
-DEFAULT_UPDATE_INTERVAL: Final = 10
+DEFAULT_UPDATE_INTERVAL: Final = 15
 
 # --- 生活指数类型映射 (QWeather API v7) ---
 SUGGESTION_TYPE_MAP: Final[dict[str, str]] = {
