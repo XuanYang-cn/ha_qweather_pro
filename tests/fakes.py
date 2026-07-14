@@ -4,6 +4,16 @@ from copy import deepcopy
 from typing import Any
 
 
+SYNTHETIC_DAILY = [
+    {"fxDate": f"2026-07-{day:02d}"}
+    for day in range(14, 21)
+]
+SYNTHETIC_HOURLY = [
+    {"fxTime": f"2026-07-{14 + hour // 24:02d}T{hour % 24:02d}:00+08:00"}
+    for hour in range(24)
+]
+
+
 QWEATHER_RESPONSES = {
     "location": {
         "code": "200",
@@ -38,12 +48,12 @@ QWEATHER_RESPONSES = {
     "daily": {
         "code": "200",
         "updateTime": "2026-07-14T08:00+08:00",
-        "daily": [],
+        "daily": SYNTHETIC_DAILY,
     },
     "hourly": {
         "code": "200",
         "updateTime": "2026-07-14T08:00+08:00",
-        "hourly": [],
+        "hourly": SYNTHETIC_HOURLY,
     },
     "warning": {"metadata": {"tag": "synthetic"}, "alerts": []},
     "air": {

@@ -75,6 +75,7 @@ class QWeatherUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             "warning": None,
         }
         self._last_success_times: dict[str, datetime] = {}
+        self._last_attempt_times: dict[str, datetime] = {}
         self._last_update_results: dict[str, str] = {
             dataset: "unavailable" for dataset in DATASET_INTERVALS
         }
@@ -85,18 +86,24 @@ class QWeatherUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
     def _should_update(self, category: str, now: datetime) -> bool:
         """Refresh a dataset as soon as its fixed next-refresh time is due."""
-        last_success = self._last_success_times.get(category)
+        last_attempt = self._last_attempt_times.get(category)
         return (
-            last_success is None
-            or now - last_success >= DATASET_INTERVALS[category]
+            last_attempt is None
+            or now - last_attempt >= DATASET_INTERVALS[category]
         )
 
     @staticmethod
-    def _response_succeeded(response: object) -> bool:
-        """Identify successful QWeather V7 and V1 response envelopes."""
-        return isinstance(response, Mapping) and (
-            response.get("code") == "200" or "metadata" in response
-        )
+    def _response_succeeded(category: str, response: object) -> bool:
+        """Identify successful envelopes with the required forecast coverage."""
+        if not isinstance(response, Mapping) or (
+            response.get("code") != "200" and "metadata" not in response
+        ):
+            return False
+        if category == "daily":
+            return isinstance(response.get("daily"), list) and len(response["daily"]) >= 7
+        if category == "hourly":
+            return isinstance(response.get("hourly"), list) and len(response["hourly"]) >= 24
+        return True
 
     @staticmethod
     def _response_failure_type(response: object) -> str:
@@ -213,7 +220,8 @@ class QWeatherUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
         results = await asyncio.gather(*tasks.values(), return_exceptions=True)
         for category, response in zip(tasks, results, strict=True):
-            if self._response_succeeded(response):
+            self._last_attempt_times[category] = refresh_time
+            if self._response_succeeded(category, response):
                 self._cache_data[category] = dict(response)
                 self._last_success_times[category] = refresh_time
                 self._last_update_results[category] = "success"

@@ -288,6 +288,37 @@ async def test_refresh_schedule_uses_fixed_10_and_60_minute_contract(
     assert qweather.hourly_calls == ["24h", "24h"]
 
 
+async def test_failed_60_minute_dataset_waits_for_its_next_scheduled_attempt(
+    hass,
+    monkeypatch,
+) -> None:
+    """A failed daily refresh remains stale without a 10-minute retry loop."""
+    qweather = FakeQWeatherClient()
+    clients = ProviderClients(
+        qweather=qweather,
+        nationwide_warnings=FakeNationwideWarningClient({}),
+    )
+    _patch_provider_clients(monkeypatch, clients)
+    entry = _config_entry()
+
+    assert await integration.async_setup_entry(hass, entry)
+    coordinator = entry.runtime_data
+    initial_success = coordinator.data["dataset_status"]["daily"]["last_success_time"]
+    clock = MutableClock(datetime.fromisoformat(initial_success))
+    monkeypatch.setattr(coordinator, "_now", clock.now)
+    qweather.responses["daily"] = {"code": "429"}
+
+    clock.advance(timedelta(minutes=60))
+    await coordinator.async_refresh()
+    assert qweather.forecast_calls == ["7d", "7d"]
+    assert coordinator.data["dataset_status"]["daily"]["state"] == "stale"
+
+    clock.advance(timedelta(minutes=10))
+    await coordinator.async_refresh()
+    assert qweather.forecast_calls == ["7d", "7d"]
+    assert coordinator.data["dataset_status"]["daily"]["state"] == "stale"
+
+
 async def test_all_core_endpoint_failures_without_snapshots_block_entry_setup(
     hass,
     monkeypatch,
@@ -447,10 +478,6 @@ async def test_forecast_fields_remain_unknown_when_the_provider_omits_them(
 ) -> None:
     """Missing forecast values are not turned into zero or a weather condition."""
     qweather = FakeQWeatherClient()
-    qweather.responses["daily"]["daily"] = [{"fxDate": "2026-07-14"}]
-    qweather.responses["hourly"]["hourly"] = [
-        {"fxTime": "2026-07-14T09:00+08:00"}
-    ]
     clients = ProviderClients(
         qweather=qweather,
         nationwide_warnings=FakeNationwideWarningClient({}),
@@ -470,6 +497,29 @@ async def test_forecast_fields_remain_unknown_when_the_provider_omits_them(
     assert hourly["native_precipitation"] is None
     assert hourly["precipitation_probability"] is None
     assert hourly["condition"] is None
+
+
+async def test_incomplete_forecast_payload_is_unavailable_not_fresh(
+    hass,
+    monkeypatch,
+) -> None:
+    """A successful envelope cannot stand in for the required 24h/7d coverage."""
+    qweather = FakeQWeatherClient()
+    qweather.responses["daily"]["daily"] = qweather.responses["daily"]["daily"][:6]
+    qweather.responses["hourly"]["hourly"] = qweather.responses["hourly"]["hourly"][:23]
+    clients = ProviderClients(
+        qweather=qweather,
+        nationwide_warnings=FakeNationwideWarningClient({}),
+    )
+    _patch_provider_clients(monkeypatch, clients)
+    entry = _config_entry()
+
+    assert await integration.async_setup_entry(hass, entry)
+
+    assert entry.runtime_data.data["daily"] == []
+    assert entry.runtime_data.data["hourly"] == []
+    assert entry.runtime_data.data["dataset_status"]["daily"]["state"] == "unavailable"
+    assert entry.runtime_data.data["dataset_status"]["hourly"]["state"] == "unavailable"
 
 
 @pytest.mark.parametrize("aqi", [42, 100, 101])
