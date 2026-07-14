@@ -95,6 +95,11 @@ def test_only_complete_fresh_hourly_coverage_can_confirm_no_rain() -> None:
         daily_rain_guidance(complete[:-1], {"state": "fresh"}, now)["state"]
         == "unconfirmed"
     )
+    missing_middle_hour = [complete[0], complete[2]]
+    assert (
+        daily_rain_guidance(missing_middle_hour, {"state": "fresh"}, now)["state"]
+        == "unconfirmed"
+    )
     assert (
         daily_rain_guidance(complete, {"state": "stale"}, now)["state"]
         == "unconfirmed"
