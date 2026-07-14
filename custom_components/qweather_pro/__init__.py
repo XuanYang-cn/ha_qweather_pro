@@ -1,15 +1,12 @@
-"""QWeather (和风天气) 集成入口."""
+"""QWeather (和风天气) integration entry point."""
 from __future__ import annotations
-
-import os
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.loader import async_get_integration
-from homeassistant.components.http import StaticPathConfig
-from homeassistant.components import frontend
 
-from .const import DOMAIN, PLATFORMS, LOGGER
+from .clients import create_provider_clients
+from .const import DOMAIN, PLATFORMS
 from .coordinator import QWeatherUpdateCoordinator
 
 # 定义强类型别名，便于 IDE 补全 runtime_data
@@ -17,38 +14,11 @@ type QWeatherConfigEntry = ConfigEntry[QWeatherUpdateCoordinator]
 
 async def async_setup_entry(hass: HomeAssistant, entry: QWeatherConfigEntry) -> bool:
     """设置配置条目."""
-    
-    # 动态获取集成元数据（版本号用于前端缓存刷新）
     integration = await async_get_integration(hass, DOMAIN)
     version = str(integration.version) if integration.version else "1.0.0"
 
-    # 注册静态资源 (跨 Entry 全局任务，仅在 HA 启动后执行一次)
-    if f"{DOMAIN}_assets" not in hass.data:
-        # 动态获取物理路径
-        local_path = hass.config.path("custom_components", DOMAIN, "www")
-        
-        if os.path.exists(local_path):
-            # 注册静态路径映射
-            await hass.http.async_register_static_paths([
-                StaticPathConfig("/qweather-local", local_path, False)
-            ])
-            
-            # 注入资源：主卡片与详情页 JS
-            assets = [
-                f"/qweather-local/qweather-card.js?v={version}",
-                f"/qweather-local/qweather-more-info.js?v={version}",
-                f"/qweather-local/qweather-i18n.js?v={version}"
-            ]
-            
-            for url in assets:
-                frontend.add_extra_js_url(hass, url)
-                
-            hass.data[f"{DOMAIN}_assets"] = True
-            LOGGER.info("QWeather Lovelace 资源注册成功 (v%s)", version)
-
-    # 初始化协调器
-    # 此时 entry.title 已经在 config_flow 阶段被锁定为城市名
-    coordinator = QWeatherUpdateCoordinator(hass, entry, version)
+    clients = create_provider_clients(hass, entry)
+    coordinator = QWeatherUpdateCoordinator(hass, entry, version, clients)
     
     # 执行初次刷新获取数据
     await coordinator.async_config_entry_first_refresh()

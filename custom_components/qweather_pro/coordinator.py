@@ -10,15 +10,13 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 from homeassistant.helpers.device_registry import DeviceEntryType, DeviceInfo
-from homeassistant.helpers.aiohttp_client import async_get_clientsession
 import homeassistant.util.dt as dt_util
 
-from .api import QWeatherAPI
+from .clients import ProviderClients
 from .const import (
-    DOMAIN, CONF_API_KEY, CONF_LOCATION_ID, CONF_USE_TOKEN,
-    CONF_PROJECT_ID, CONF_KEY_ID, CONF_PRIVATE_KEY, CONF_UPDATE_INTERVAL,
+    DOMAIN, CONF_LOCATION_ID, CONF_UPDATE_INTERVAL,
     SUGGESTION_TYPE_MAP, CONF_DAILYSTEPS, CONF_HOURLYSTEPS, 
-    CONF_GIRD, DEFAULT_UPDATE_INTERVAL, LANGUAGE_MAP, LOGGER
+    DEFAULT_UPDATE_INTERVAL, LANGUAGE_MAP, LOGGER
 )
 from .condition import CONDITION_MAP
 
@@ -39,14 +37,16 @@ TTL_AIR = 3600
 # 理由：建议类数据（洗车、穿衣等）全天更新频率极低，3小时更新一次即可。
 TTL_INDICES = 10800
 
-# 分钟级降水：900秒 (15分钟)
-# 理由：这是最消耗额度的接口。将其从5分钟改为15分钟，可节省 66% 的请求量。
-TTL_MINUTELY = 900
-
 class QWeatherUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     """QWeather 数据异步调度中心."""
 
-    def __init__(self, hass: HomeAssistant, entry: ConfigEntry, version: str) -> None:
+    def __init__(
+        self,
+        hass: HomeAssistant,
+        entry: ConfigEntry,
+        version: str,
+        clients: ProviderClients,
+    ) -> None:
         """初始化协调器."""
         self.entry = entry
         self.version = version
@@ -57,26 +57,21 @@ class QWeatherUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         update_min = entry.options.get(CONF_UPDATE_INTERVAL, DEFAULT_UPDATE_INTERVAL)
         self._base_interval = timedelta(minutes=update_min)
 
-        # 初始化 API 客户端
-        self.api = QWeatherAPI(
-            session=async_get_clientsession(hass), 
-            api_key=entry.data.get(CONF_API_KEY),
-            use_token=entry.data.get(CONF_USE_TOKEN),
-            project_id=entry.data.get(CONF_PROJECT_ID),
-            key_id=entry.data.get(CONF_KEY_ID),
-            private_key=entry.data.get(CONF_PRIVATE_KEY),
-            host=entry.data.get("host")
-        )
+        self.api = clients.qweather
+        self.nationwide_warning_api = clients.nationwide_warnings
 
         super().__init__(
-            hass, LOGGER, name=DOMAIN,
+            hass,
+            LOGGER,
+            config_entry=entry,
+            name=DOMAIN,
             update_interval=self._base_interval,
         )
         
         # 初始化本地持久化缓存
         self._cache_data: dict[str, Any] = {
             "now": {}, "daily": {}, "hourly": {}, "air": {}, 
-            "indices": {}, "warning": {}, "minutely": {}
+            "indices": {}, "warning": {}
         }
         self._last_update_times: dict[str, float] = {}
 
@@ -115,7 +110,6 @@ class QWeatherUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         task_map = []
 
         options = self.entry.options
-        use_grid = options.get(CONF_GIRD, False)
 
         # 预处理坐标参数
         try:
@@ -125,42 +119,28 @@ class QWeatherUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
         # ---构建并发请求队列 ---
         
-        # 实况天气 (根据开关选择格点或标准)
-        if use_grid:
-            tasks.append(self.api.get_grid_weather_now(lat, lon, qweather_lang))
-        else:
-            tasks.append(self.api.get_weather_now(lat, lon, qweather_lang))
+        # 第一版固定使用标准城市天气，不调用格点天气。
+        tasks.append(self.api.get_weather_now(lat, lon, qweather_lang))
         task_map.append("now")
 
         # 逐日预报 (带 TTL 保护)
         if self._should_update("daily", TTL_DAILY):
             d_val = int(options.get(CONF_DAILYSTEPS, 7))
-            if use_grid:
-                tasks.append(self.api.get_grid_forecast(lat, lon, f"{d_val}d", qweather_lang))
-            else:
-                tasks.append(self.api.get_forecast(lat, lon, f"{d_val}d", qweather_lang))
+            tasks.append(self.api.get_forecast(lat, lon, f"{d_val}d", qweather_lang))
             task_map.append("daily")
 
         # 逐小时预报 (带 TTL 保护)
         if self._should_update("hourly", TTL_HOURLY):
             h_val = int(options.get(CONF_HOURLYSTEPS, 24))
-            if use_grid:
-                tasks.append(self.api.get_grid_hourly(lat, lon, f"{h_val}h", qweather_lang))
-            else:
-                tasks.append(self.api.get_hourly(lat, lon, f"{h_val}h", qweather_lang))
+            tasks.append(self.api.get_hourly(lat, lon, f"{h_val}h", qweather_lang))
             task_map.append("hourly")
-
-        # 分钟降水
-        if self._should_update("minutely", TTL_MINUTELY):
-            tasks.append(self.api.get_minutely(lat, lon, restricted_lang))
-            task_map.append("minutely")
 
         # 预警
         tasks.append(self.api.get_warning_v1(lat, lon, qweather_lang))
         task_map.append("warning")
 
         # 专业空气质量 (格点模式下通常由实况提供基础AQI，此处强制调用V1专业接口)
-        if not use_grid and self._should_update("air", TTL_AIR):
+        if self._should_update("air", TTL_AIR):
             tasks.append(self.api.get_air_v1(lat, lon, qweather_lang))
             task_map.append("air")
 
@@ -168,6 +148,18 @@ class QWeatherUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         if self._should_update("indices", TTL_INDICES):
             tasks.append(self.api.get_indices(lat, lon, restricted_lang))
             task_map.append("indices")
+
+        try:
+            nationwide_warnings = (
+                await self.nationwide_warning_api.async_fetch_active_warnings()
+            )
+        except Exception as err:
+            LOGGER.debug("China Weather nationwide warning baseline failed: %s", err)
+            nationwide_warnings = {
+                "source": "China Weather",
+                "status": "unavailable",
+                "warnings": [],
+            }
 
         # ---并发执行与结果合并 ---
         try:
@@ -211,7 +203,6 @@ class QWeatherUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         air_raw = c.get("air", {})
         warning_raw = c.get("warning", {}).get("alerts", [])
         indices_list = c.get("indices", {}).get("daily", [])
-        minutely_raw = c.get("minutely", {})
 
         # 预警深度解析
         parsed_warnings = []
@@ -289,8 +280,9 @@ class QWeatherUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             "warning": parsed_warnings,
             "indices": self._parse_indices(indices_list),
             "city": self.city_name,
-            "minutely_summary": minutely_raw.get("summary", "No precipitation in the next two hours"),
-            "minutely_detail": minutely_raw.get("minutely", []),
+            "minutely_summary": None,
+            "minutely_detail": [],
+            "nationwide_warnings": nationwide_warnings,
             "weather_abstract": self._generate_smart_abstract(c, now_dt),
             "update_time": dt_util.now().strftime("%Y-%m-%d %H:%M:%S"),
         }

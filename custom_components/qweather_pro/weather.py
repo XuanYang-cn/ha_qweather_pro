@@ -17,7 +17,7 @@ from homeassistant.const import (
 )
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from .const import DOMAIN, ATTRIBUTION, CONF_CUSTOM_UI
+from .const import DOMAIN, ATTRIBUTION
 from .coordinator import QWeatherUpdateCoordinator
 
 # 定义天气描述符
@@ -225,9 +225,5 @@ class HeFengWeather(CoordinatorEntity[QWeatherUpdateCoordinator], WeatherEntity)
         #--- 生活指数 (Indices) 属性优化 ---
         if indices := data.get("indices"):
             attrs["suggestion"] = indices
-
-        # 4. 自定义 UI 触发标志 (保持对 Lovelace 卡片的兼容)
-        if self.coordinator.entry.options.get(CONF_CUSTOM_UI):
-            attrs["custom_ui_more_info"] = "qweather-more-info"
 
         return attrs

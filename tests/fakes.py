@@ -1,0 +1,95 @@
+"""Programmable provider clients for config-entry contract tests."""
+
+from copy import deepcopy
+from typing import Any
+
+
+QWEATHER_RESPONSES = {
+    "now": {
+        "code": "200",
+        "now": {
+            "temp": "24",
+            "text": "多云",
+            "icon": "101",
+            "humidity": "63",
+            "pressure": "1008",
+            "windSpeed": "12",
+            "wind360": "135",
+            "windDir": "东南风",
+            "windScale": "3",
+            "feelsLike": "25",
+            "obsTime": "2026-07-14T08:00+08:00",
+        },
+    },
+    "daily": {"code": "200", "daily": []},
+    "hourly": {"code": "200", "hourly": []},
+    "warning": {"metadata": {"tag": "synthetic"}, "alerts": []},
+    "air": {
+        "metadata": {"tag": "synthetic"},
+        "indexes": [
+            {
+                "aqi": 42,
+                "category": "优",
+                "level": "1",
+                "primaryPollutant": None,
+                "health": {},
+            }
+        ],
+        "pollutants": [],
+    },
+    "indices": {"code": "200", "daily": []},
+}
+
+
+class FakeQWeatherClient:
+    """Return configured QWeather payloads and record every endpoint call."""
+
+    def __init__(self, responses: dict[str, dict[str, Any]] | None = None) -> None:
+        self.responses = deepcopy(responses or QWEATHER_RESPONSES)
+        self.calls: list[str] = []
+
+    async def _response(self, name: str) -> dict[str, Any]:
+        self.calls.append(name)
+        return deepcopy(self.responses[name])
+
+    async def get_weather_now(self, *_args: Any) -> dict[str, Any]:
+        return await self._response("now")
+
+    async def get_forecast(self, *_args: Any) -> dict[str, Any]:
+        return await self._response("daily")
+
+    async def get_hourly(self, *_args: Any) -> dict[str, Any]:
+        return await self._response("hourly")
+
+    async def get_warning_v1(self, *_args: Any) -> dict[str, Any]:
+        return await self._response("warning")
+
+    async def get_air_v1(self, *_args: Any) -> dict[str, Any]:
+        return await self._response("air")
+
+    async def get_indices(self, *_args: Any) -> dict[str, Any]:
+        return await self._response("indices")
+
+    async def get_grid_weather_now(self, *_args: Any) -> dict[str, Any]:
+        raise AssertionError("The first fork version must not call grid weather")
+
+    async def get_grid_forecast(self, *_args: Any) -> dict[str, Any]:
+        raise AssertionError("The first fork version must not call grid forecasts")
+
+    async def get_grid_hourly(self, *_args: Any) -> dict[str, Any]:
+        raise AssertionError("The first fork version must not call grid forecasts")
+
+    async def get_minutely(self, *_args: Any) -> dict[str, Any]:
+        raise AssertionError("The first fork version must not call minutely weather")
+
+
+class FakeNationwideWarningClient:
+    """Return one programmable nationwide-warning snapshot."""
+
+    def __init__(self, response: dict[str, Any]) -> None:
+        self.response = deepcopy(response)
+        self.calls = 0
+
+    async def async_fetch_active_warnings(self) -> dict[str, Any]:
+        self.calls += 1
+        return deepcopy(self.response)
