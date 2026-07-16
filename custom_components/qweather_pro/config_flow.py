@@ -1,4 +1,5 @@
 """QWeather (和风天气) 配置流实现."""
+
 from __future__ import annotations
 
 from collections.abc import Mapping
@@ -70,6 +71,26 @@ def first_version_reconfigure_data(
     return first_version_auth_data({**existing, **updates})
 
 
+def private_key_for_flow(
+    generated_private_key: str,
+    user_input: Mapping[str, Any],
+) -> str:
+    """Accept a locally provisioned Ed25519 PEM key only from an internal flow caller."""
+    provided_private_key = user_input.get(CONF_PRIVATE_KEY)
+    if not isinstance(provided_private_key, str) or not provided_private_key.strip():
+        return generated_private_key
+    try:
+        parsed_key = serialization.load_pem_private_key(
+            provided_private_key.encode("utf-8"),
+            password=None,
+        )
+    except (TypeError, ValueError) as error:
+        raise ValueError("The provisioned QWeather private key is invalid") from error
+    if not isinstance(parsed_key, ed25519.Ed25519PrivateKey):
+        raise ValueError("The provisioned QWeather private key is not Ed25519")
+    return provided_private_key
+
+
 class QWeatherConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     """处理和风天气的配置流."""
 
@@ -84,7 +105,9 @@ class QWeatherConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
     @staticmethod
     @callback
-    def async_get_options_flow(config_entry: config_entries.ConfigEntry) -> QWeatherOptionsFlow:
+    def async_get_options_flow(
+        config_entry: config_entries.ConfigEntry,
+    ) -> QWeatherOptionsFlow:
         """获取并关联选项流."""
         return QWeatherOptionsFlow()
 
@@ -94,22 +117,24 @@ class QWeatherConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         private_bytes = private_key.private_bytes(
             encoding=serialization.Encoding.PEM,
             format=serialization.PrivateFormat.PKCS8,
-            encryption_algorithm=serialization.NoEncryption()
+            encryption_algorithm=serialization.NoEncryption(),
         )
         public_bytes = private_key.public_key().public_bytes(
             encoding=serialization.Encoding.PEM,
-            format=serialization.PublicFormat.SubjectPublicKeyInfo
+            format=serialization.PublicFormat.SubjectPublicKeyInfo,
         )
-        return private_bytes.decode('utf-8'), public_bytes.decode('utf-8')
+        return private_bytes.decode("utf-8"), public_bytes.decode("utf-8")
 
-    async def async_step_user(self, user_input: dict[str, Any] | None = None) -> FlowResult:
+    async def async_step_user(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
         """入口步骤：决定是新建还是复用账号."""
         existing_entries = [
             entry
             for entry in self._async_current_entries()
             if entry.data.get(CONF_USE_TOKEN)
         ]
-        
+
         # 如果是第一次添加，直接走新建流程
         if not existing_entries:
             return await self.async_step_setup(user_input)
@@ -119,7 +144,7 @@ class QWeatherConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             selection = user_input.get(CONF_ACCOUNT_SELECT)
             if selection == "new_account":
                 return await self.async_step_setup()
-            
+
             # 【复用逻辑】记住选中的 entry_id
             self._temp_data["reuse_from"] = selection
             return await self.async_step_reuse_location()
@@ -132,18 +157,24 @@ class QWeatherConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
         return self.async_show_form(
             step_id="user",
-            data_schema=vol.Schema({
-                vol.Required(CONF_ACCOUNT_SELECT, default="new_account"): selector.SelectSelector(
-                    selector.SelectSelectorConfig(
-                        options=account_options,
-                        mode=selector.SelectSelectorMode.DROPDOWN,
-                        translation_key="account_selection"
+            data_schema=vol.Schema(
+                {
+                    vol.Required(
+                        CONF_ACCOUNT_SELECT, default="new_account"
+                    ): selector.SelectSelector(
+                        selector.SelectSelectorConfig(
+                            options=account_options,
+                            mode=selector.SelectSelectorMode.DROPDOWN,
+                            translation_key="account_selection",
+                        )
                     )
-                )
-            })
+                }
+            ),
         )
 
-    async def async_step_setup(self, user_input: dict[str, Any] | None = None) -> FlowResult:
+    async def async_step_setup(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
         """标准设置页面."""
         if user_input is not None:
             self._temp_data.update(first_version_auth_data(user_input))
@@ -155,60 +186,81 @@ class QWeatherConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         )
         return self.async_show_form(
             step_id="setup",
-            data_schema=vol.Schema({
-                vol.Required(CONF_HOST): selector.TextSelector(),
-                vol.Required(CONF_LOCATION_ID, default=default_location): selector.TextSelector(),                                       
-            }),
+            data_schema=vol.Schema(
+                {
+                    vol.Required(CONF_HOST): selector.TextSelector(),
+                    vol.Required(
+                        CONF_LOCATION_ID, default=default_location
+                    ): selector.TextSelector(),
+                }
+            ),
             description_placeholders={
                 "qweather_console": "https://console.qweather.com"
-            }
+            },
         )
 
-    async def async_step_reuse_location(self, user_input: dict[str, Any] | None = None) -> FlowResult:
+    async def async_step_reuse_location(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
         """复用模式下的精简表单：只显示原有的位置输入框."""
         if user_input is not None:
             # 从选中的旧条目中提取认证信息
             reuse_id = self._temp_data["reuse_from"]
-            old_entry = next(e for e in self._async_current_entries() if e.entry_id == reuse_id)
-            
+            old_entry = next(
+                e for e in self._async_current_entries() if e.entry_id == reuse_id
+            )
+
             # 合并凭据到临时数据
             self._temp_data.update(old_entry.data)
             self._temp_data[CONF_LOCATION_ID] = user_input[CONF_LOCATION_ID]
-            
+
             return await self._async_search_location(self._temp_data)
 
         # 沿用原有的位置输入框定义
         return self.async_show_form(
             step_id="reuse_location",
-            data_schema=vol.Schema({
-                vol.Required(CONF_LOCATION_ID): selector.TextSelector(),
-            })
+            data_schema=vol.Schema(
+                {
+                    vol.Required(CONF_LOCATION_ID): selector.TextSelector(),
+                }
+            ),
         )
 
-    async def async_step_jwt_setup(self, user_input: dict[str, Any] | None = None) -> FlowResult:
+    async def async_step_jwt_setup(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
         """JWT 身份验证步骤."""
         if not self._generated_private_key:
-            self._generated_private_key, self._generated_public_key = await self.hass.async_add_executor_job(
-                self._generate_key_pair_sync
-            )
+            (
+                self._generated_private_key,
+                self._generated_public_key,
+            ) = await self.hass.async_add_executor_job(self._generate_key_pair_sync)
 
         if user_input is not None:
-            self._temp_data.update({
-                **user_input, 
-                CONF_PRIVATE_KEY: self._generated_private_key
-            })
+            private_key = private_key_for_flow(
+                self._generated_private_key,
+                user_input,
+            )
+            self._temp_data.update(
+                {
+                    **user_input,
+                    CONF_PRIVATE_KEY: private_key,
+                }
+            )
             return await self._async_search_location(self._temp_data)
 
         return self.async_show_form(
             step_id="jwt_setup",
-            data_schema=vol.Schema({
-                vol.Required(CONF_PROJECT_ID): selector.TextSelector(),
-                vol.Required(CONF_KEY_ID): selector.TextSelector(),
-            }),
+            data_schema=vol.Schema(
+                {
+                    vol.Required(CONF_PROJECT_ID): selector.TextSelector(),
+                    vol.Required(CONF_KEY_ID): selector.TextSelector(),
+                }
+            ),
             description_placeholders={
                 "public_key": self._generated_public_key,
-                "qweather_console": "https://console.qweather.com"
-            }
+                "qweather_console": "https://console.qweather.com",
+            },
         )
 
     async def _async_search_location(self, config_data: dict[str, Any]) -> FlowResult:
@@ -218,7 +270,11 @@ class QWeatherConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         raw_loc = quantize_location_input(config_data[CONF_LOCATION_ID])
 
         # 检查过期域名
-        deprecated_domains = ["api.qweather.com", "devapi.qweather.com", "geoapi.qweather.com"]
+        deprecated_domains = [
+            "api.qweather.com",
+            "devapi.qweather.com",
+            "geoapi.qweather.com",
+        ]
         if any(domain in user_host for domain in deprecated_domains):
             errors["base"] = "api_host_deprecated"
 
@@ -229,16 +285,18 @@ class QWeatherConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 # 获取系统语言进行本地化搜索
                 ha_lang = self.hass.config.language
                 qweather_lang = LANGUAGE_MAP.get(ha_lang, "en")
-                
+
                 res = await api.city_lookup(raw_loc, lang=qweather_lang)
-                api_code = res.get("code") # 获取 API 状态码
-                
+                api_code = res.get("code")  # 获取 API 状态码
+
                 if api_code == "200" and res.get("location"):
                     self._discovered_locations = res["location"]
                     if len(self._discovered_locations) == 1:
-                        return await self._async_verify_and_create(self._discovered_locations[0])
+                        return await self._async_verify_and_create(
+                            self._discovered_locations[0]
+                        )
                     return await self.async_step_select_location()
-                
+
                 # --- 精细化错误分类 ---
                 if api_code == "400":
                     # 细分：是参数错误还是找不到位置
@@ -266,7 +324,7 @@ class QWeatherConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     errors["base"] = "server_error"
                 else:
                     errors["base"] = "cannot_connect"
-                    
+
             except Exception as err:
                 LOGGER.error(
                     "Unable to validate the configured QWeather API host (%s)",
@@ -288,16 +346,17 @@ class QWeatherConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             step_id = "jwt_setup"
 
         return self.async_show_form(
-            step_id=step_id, 
-            data_schema=self._get_schema(config_data), 
-            errors=errors
+            step_id=step_id, data_schema=self._get_schema(config_data), errors=errors
         )
 
-    async def async_step_select_location(self, user_input: dict[str, Any] | None = None) -> FlowResult:
+    async def async_step_select_location(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
         """让用户从多个搜索结果中确认城市."""
         if user_input is not None:
             location = next(
-                loc for loc in self._discovered_locations 
+                loc
+                for loc in self._discovered_locations
                 if loc["id"] == user_input["location_index"]
             )
             return await self._async_verify_and_create(location)
@@ -306,24 +365,27 @@ class QWeatherConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         options = [
             {
                 "value": loc["id"],
-                "label": f"{loc['name']} ({loc['adm2']}, {loc['adm1']}, {loc['country']})"
+                "label": f"{loc['name']} ({loc['adm2']}, {loc['adm1']}, {loc['country']})",
             }
             for loc in self._discovered_locations
         ]
 
         return self.async_show_form(
             step_id="select_location",
-            data_schema=vol.Schema({
-                vol.Required("location_index"): selector.SelectSelector(
-                    selector.SelectSelectorConfig(
-                        options=options,
-                        mode=selector.SelectSelectorMode.LIST
+            data_schema=vol.Schema(
+                {
+                    vol.Required("location_index"): selector.SelectSelector(
+                        selector.SelectSelectorConfig(
+                            options=options, mode=selector.SelectSelectorMode.LIST
+                        )
                     )
-                )
-            })
+                }
+            ),
         )
 
-    async def _async_verify_and_create(self, location_info: dict[str, Any]) -> FlowResult:
+    async def _async_verify_and_create(
+        self, location_info: dict[str, Any]
+    ) -> FlowResult:
         """实现地理数据标准化，锁定物理 ID 并创建条目."""
         qweather_lang = LANGUAGE_MAP.get(self.hass.config.language, "en")
         try:
@@ -337,7 +399,7 @@ class QWeatherConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 "QWeather quantized location left the selected warning jurisdiction"
             )
             return self.async_abort(reason="quantized_location_mismatch")
-        
+
         # 新临时数据
         self._temp_data[CONF_LOCATION_ID] = normalized_coords
         city_title = location_info["name"]
@@ -345,15 +407,17 @@ class QWeatherConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         # 锁定物理唯一 ID
         unique_id = f"qw_{normalized_coords.replace(',', '_')}"
         await self.async_set_unique_id(unique_id)
-        
+
         if self.source == config_entries.SOURCE_RECONFIGURE:
-            return self.async_update_reload_and_abort(self._get_reconfigure_entry(), data=self._temp_data)
-        
+            return self.async_update_reload_and_abort(
+                self._get_reconfigure_entry(), data=self._temp_data
+            )
+
         self._abort_if_unique_id_configured()
 
         # 创建集成条目
         return self.async_create_entry(
-            title=city_title, 
+            title=city_title,
             data=self._temp_data,
             options=first_version_options(
                 {
@@ -361,38 +425,60 @@ class QWeatherConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     CONF_DAILYSTEPS: "7",
                     CONF_HOURLYSTEPS: "24",
                 }
-            )
+            ),
         )
 
     def _get_schema(self, data: dict) -> vol.Schema:
         """获取带有当前数据的 Schema 用于错误回显."""
         # 复用模式下的回显
         if "reuse_from" in self._temp_data:
-            return vol.Schema({
-                vol.Required(CONF_LOCATION_ID, default=data.get(CONF_LOCATION_ID)): selector.TextSelector()
-            })
-        
+            return vol.Schema(
+                {
+                    vol.Required(
+                        CONF_LOCATION_ID, default=data.get(CONF_LOCATION_ID)
+                    ): selector.TextSelector()
+                }
+            )
+
         # JWT 模式下的回显
         if data.get(CONF_USE_TOKEN):
-            return vol.Schema({
-                vol.Required(CONF_PROJECT_ID, default=data.get(CONF_PROJECT_ID)): selector.TextSelector(),
-                vol.Required(CONF_KEY_ID, default=data.get(CONF_KEY_ID)): selector.TextSelector(),
-            })
+            return vol.Schema(
+                {
+                    vol.Required(
+                        CONF_PROJECT_ID, default=data.get(CONF_PROJECT_ID)
+                    ): selector.TextSelector(),
+                    vol.Required(
+                        CONF_KEY_ID, default=data.get(CONF_KEY_ID)
+                    ): selector.TextSelector(),
+                }
+            )
 
         # 普通 setup 模式下的全量回显
-        return vol.Schema({
-            vol.Required(CONF_HOST, default=data.get(CONF_HOST)): selector.TextSelector(),
-            vol.Required(CONF_LOCATION_ID, default=data.get(CONF_LOCATION_ID)): selector.TextSelector(),
-            vol.Required(CONF_USE_TOKEN, default=data.get(CONF_USE_TOKEN)): selector.BooleanSelector(),
-            vol.Optional(CONF_API_KEY, default=data.get(CONF_API_KEY)): selector.TextSelector(
-                selector.TextSelectorConfig(type=selector.TextSelectorType.PASSWORD)
-            ),
-        })
+        return vol.Schema(
+            {
+                vol.Required(
+                    CONF_HOST, default=data.get(CONF_HOST)
+                ): selector.TextSelector(),
+                vol.Required(
+                    CONF_LOCATION_ID, default=data.get(CONF_LOCATION_ID)
+                ): selector.TextSelector(),
+                vol.Required(
+                    CONF_USE_TOKEN, default=data.get(CONF_USE_TOKEN)
+                ): selector.BooleanSelector(),
+                vol.Optional(
+                    CONF_API_KEY, default=data.get(CONF_API_KEY)
+                ): selector.TextSelector(
+                    selector.TextSelectorConfig(type=selector.TextSelectorType.PASSWORD)
+                ),
+            }
+        )
 
-    async def async_step_reconfigure(self, user_input: dict[str, Any] | None = None) -> FlowResult:
+    async def async_step_reconfigure(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
         """重新配置仅支持 JWT/Ed25519 凭据."""
         entry = self._get_reconfigure_entry()
-        
+
         if user_input is not None:
             # 合并旧数据与新输入
             self._temp_data = first_version_reconfigure_data(entry.data, user_input)
@@ -401,16 +487,25 @@ class QWeatherConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         # 初始显示重新配置表单
         return self.async_show_form(
             step_id="reconfigure",
-            data_schema=vol.Schema({
-                vol.Required(CONF_HOST, default=entry.data.get(CONF_HOST, "")): selector.TextSelector(),
-                vol.Required(CONF_LOCATION_ID, default=entry.data.get(CONF_LOCATION_ID, "")): selector.TextSelector(),
-            })
+            data_schema=vol.Schema(
+                {
+                    vol.Required(
+                        CONF_HOST, default=entry.data.get(CONF_HOST, "")
+                    ): selector.TextSelector(),
+                    vol.Required(
+                        CONF_LOCATION_ID, default=entry.data.get(CONF_LOCATION_ID, "")
+                    ): selector.TextSelector(),
+                }
+            ),
         )
+
 
 class QWeatherOptionsFlow(config_entries.OptionsFlow):
     """处理已安装集成的 UI 选项配置."""
 
-    async def async_step_init(self, user_input: dict[str, Any] | None = None) -> FlowResult:
+    async def async_step_init(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
         """选项配置主界面."""
         if user_input is not None:
             return self.async_create_entry(

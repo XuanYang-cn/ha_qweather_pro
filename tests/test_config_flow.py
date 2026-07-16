@@ -1,11 +1,14 @@
 """First-version config-flow policy tests."""
 
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from homeassistant.const import CONF_API_KEY, CONF_HOST
 
 from custom_components.qweather_pro.config_flow import (
     first_version_auth_data,
     first_version_options,
     first_version_reconfigure_data,
+    private_key_for_flow,
 )
 from custom_components.qweather_pro.const import (
     CONF_CUSTOM_UI,
@@ -70,3 +73,19 @@ def test_reconfigure_removes_api_key_inherited_from_an_existing_entry() -> None:
     assert data[CONF_LOCATION_ID] == "121.45,31.25"
     assert data[CONF_USE_TOKEN] is True
     assert CONF_API_KEY not in data
+
+
+def test_private_key_for_flow_uses_only_a_valid_provisioned_ed25519_pem() -> None:
+    generated = "generated-private-key"
+    provisioned = (
+        Ed25519PrivateKey.generate()
+        .private_bytes(
+            serialization.Encoding.PEM,
+            serialization.PrivateFormat.PKCS8,
+            serialization.NoEncryption(),
+        )
+        .decode("utf-8")
+    )
+
+    assert private_key_for_flow(generated, {}) == generated
+    assert private_key_for_flow(generated, {"private_key": provisioned}) == provisioned
