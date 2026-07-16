@@ -92,6 +92,16 @@ def private_key_for_flow(
     return provided_private_key
 
 
+def private_key_selector() -> selector.TextSelector:
+    """Return the multi-line selector used to submit a PEM private key."""
+    return selector.TextSelector(
+        selector.TextSelectorConfig(
+            multiline=True,
+            type=selector.TextSelectorType.PASSWORD,
+        )
+    )
+
+
 class QWeatherConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     """处理和风天气的配置流."""
 
@@ -273,11 +283,7 @@ class QWeatherConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 {
                     vol.Required(CONF_PROJECT_ID): selector.TextSelector(),
                     vol.Required(CONF_KEY_ID): selector.TextSelector(),
-                    vol.Optional(CONF_PRIVATE_KEY): selector.TextSelector(
-                        selector.TextSelectorConfig(
-                            type=selector.TextSelectorType.PASSWORD,
-                        )
-                    ),
+                    vol.Optional(CONF_PRIVATE_KEY): private_key_selector(),
                 }
             ),
             description_placeholders={
@@ -473,11 +479,7 @@ class QWeatherConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     vol.Required(
                         CONF_KEY_ID, default=data.get(CONF_KEY_ID)
                     ): selector.TextSelector(),
-                    vol.Optional(CONF_PRIVATE_KEY): selector.TextSelector(
-                        selector.TextSelectorConfig(
-                            type=selector.TextSelectorType.PASSWORD,
-                        )
-                    ),
+                    vol.Optional(CONF_PRIVATE_KEY): private_key_selector(),
                 }
             )
 

@@ -11,6 +11,7 @@ from custom_components.qweather_pro.config_flow import (
     first_version_options,
     first_version_reconfigure_data,
     private_key_for_flow,
+    private_key_selector,
 )
 from custom_components.qweather_pro.const import (
     CONF_CUSTOM_UI,
@@ -112,3 +113,10 @@ def test_private_key_for_flow_uses_only_a_valid_provisioned_ed25519_pem() -> Non
     )
     with pytest.raises(ValueError, match="not Ed25519"):
         private_key_for_flow(generated, {"private_key": rsa_private_key})
+
+
+def test_private_key_selector_accepts_multiline_pem_input() -> None:
+    selector_config = private_key_selector().config
+
+    assert selector_config["multiline"] is True
+    assert selector_config["type"] == "password"
