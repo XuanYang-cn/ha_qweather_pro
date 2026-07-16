@@ -19,10 +19,11 @@
       },
       "jwt_setup": {
         "title": "Configure JWT Security Authentication",
-        "description": "A public key has been automatically generated for you.\r\n**Steps:**\r\n1. Copy the **public key** in the box below.\r\n2. Go to the [QWeather Console]({qweather_console}), add a credential to your project, select **JSON Web Token**, and paste the public key.\r\n```text\n{public_key}\n```\r\nAfter completing this, fill in the **Project ID** and **Key ID** below.\r\n#### Note: JWT authentication can only be added once. If you re-add the integration, the original JWT credential will no longer be valid.",
+        "description": "A public key has been automatically generated for you.\r\n**Steps:**\r\n1. Copy the **public key** in the box below.\r\n2. Go to the [QWeather Console]({qweather_console}), add a credential to your project, select **JSON Web Token**, and paste the public key.\r\n```text\n{public_key}\n```\r\nAfter completing this, fill in the **Project ID** and **Key ID** below. Leave **Ed25519 private key** blank to use this generated key pair. Only paste a private key when its matching public key has already been provisioned in QWeather.\r\n#### Note: JWT authentication can only be added once. If you re-add the integration, the original JWT credential will no longer be valid.",
         "data": {
           "project_id": "Project ID",
-          "key_id": "Key ID"
+          "key_id": "Key ID",
+          "private_key": "Ed25519 private key (optional; leave empty to generate)"
         }
       },
       "reuse_location": {
@@ -53,6 +54,7 @@
       "location_not_found": "Location not found, please try entering precise “longitude,latitude”",
       "data_not_available": "No weather data available for this location",
       "invalid_auth": "Authentication failed, please check your Key or JWT configuration",
+      "invalid_private_key": "The provisioned private key must be a valid unencrypted Ed25519 PEM key",
       "no_credit": "Insufficient account credit or overdue status, please check the billing in the HeWeather console",
       "security_restriction": "Request violates your IP or security restrictions set in the console",
       "invalid_host": "API host error, please ensure you are using your dedicated endpoint",

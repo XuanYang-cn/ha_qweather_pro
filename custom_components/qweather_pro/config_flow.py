@@ -75,10 +75,11 @@ def private_key_for_flow(
     generated_private_key: str,
     user_input: Mapping[str, Any],
 ) -> str:
-    """Accept a locally provisioned Ed25519 PEM key only from an internal flow caller."""
+    """Accept a locally provisioned Ed25519 PEM key from the configuration flow."""
     provided_private_key = user_input.get(CONF_PRIVATE_KEY)
     if not isinstance(provided_private_key, str) or not provided_private_key.strip():
         return generated_private_key
+    provided_private_key = provided_private_key.strip()
     try:
         parsed_key = serialization.load_pem_private_key(
             provided_private_key.encode("utf-8"),
@@ -237,10 +238,27 @@ class QWeatherConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             ) = await self.hass.async_add_executor_job(self._generate_key_pair_sync)
 
         if user_input is not None:
-            private_key = private_key_for_flow(
-                self._generated_private_key,
-                user_input,
-            )
+            try:
+                private_key = private_key_for_flow(
+                    self._temp_data.get(CONF_PRIVATE_KEY, self._generated_private_key),
+                    user_input,
+                )
+            except ValueError:
+                return self.async_show_form(
+                    step_id="jwt_setup",
+                    data_schema=self._get_schema(
+                        {
+                            **self._temp_data,
+                            **user_input,
+                            CONF_USE_TOKEN: True,
+                        }
+                    ),
+                    errors={"base": "invalid_private_key"},
+                    description_placeholders={
+                        "public_key": self._generated_public_key,
+                        "qweather_console": "https://console.qweather.com",
+                    },
+                )
             self._temp_data.update(
                 {
                     **user_input,
@@ -255,6 +273,11 @@ class QWeatherConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 {
                     vol.Required(CONF_PROJECT_ID): selector.TextSelector(),
                     vol.Required(CONF_KEY_ID): selector.TextSelector(),
+                    vol.Optional(CONF_PRIVATE_KEY): selector.TextSelector(
+                        selector.TextSelectorConfig(
+                            type=selector.TextSelectorType.PASSWORD,
+                        )
+                    ),
                 }
             ),
             description_placeholders={
@@ -450,6 +473,11 @@ class QWeatherConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     vol.Required(
                         CONF_KEY_ID, default=data.get(CONF_KEY_ID)
                     ): selector.TextSelector(),
+                    vol.Optional(CONF_PRIVATE_KEY): selector.TextSelector(
+                        selector.TextSelectorConfig(
+                            type=selector.TextSelectorType.PASSWORD,
+                        )
+                    ),
                 }
             )
 

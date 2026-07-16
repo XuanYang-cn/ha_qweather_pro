@@ -1,7 +1,9 @@
 """First-version config-flow policy tests."""
 
+import pytest
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+from cryptography.hazmat.primitives.asymmetric.rsa import generate_private_key
 from homeassistant.const import CONF_API_KEY, CONF_HOST
 
 from custom_components.qweather_pro.config_flow import (
@@ -88,4 +90,25 @@ def test_private_key_for_flow_uses_only_a_valid_provisioned_ed25519_pem() -> Non
     )
 
     assert private_key_for_flow(generated, {}) == generated
-    assert private_key_for_flow(generated, {"private_key": provisioned}) == provisioned
+    assert (
+        private_key_for_flow(generated, {"private_key": provisioned})
+        == provisioned.strip()
+    )
+    with pytest.raises(ValueError, match="invalid"):
+        private_key_for_flow(
+            generated,
+            {
+                "private_key": "-----BEGIN PRIVATE KEY-----\ninvalid\n-----END PRIVATE KEY-----"
+            },
+        )
+    rsa_private_key = (
+        generate_private_key(public_exponent=65537, key_size=2048)
+        .private_bytes(
+            serialization.Encoding.PEM,
+            serialization.PrivateFormat.PKCS8,
+            serialization.NoEncryption(),
+        )
+        .decode("utf-8")
+    )
+    with pytest.raises(ValueError, match="not Ed25519"):
+        private_key_for_flow(generated, {"private_key": rsa_private_key})

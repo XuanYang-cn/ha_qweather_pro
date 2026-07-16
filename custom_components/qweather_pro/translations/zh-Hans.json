@@ -19,10 +19,11 @@
       },
       "jwt_setup": {
         "title": "配置 JWT 安全认证",
-        "description": "系统已为您自动生成公钥。\r\n **操作步骤：** \r\n1. 复制下方框中的 **公钥**。\r\n2. 前往[和风天气控制台]({qweather_console}),在项目中添加凭据，选择 **JSON Web Token** 并粘贴公钥。\r\n```text\n{public_key}\n```\r\n完成后,填写下方的 **项目ID** 和 **凭据ID**。\r\n #### 注意：JWT方式，只能添加一次，重新添加集成，原有JWT凭据将无法使用。",
+        "description": "系统已为您自动生成公钥。\r\n **操作步骤：** \r\n1. 复制下方框中的 **公钥**。\r\n2. 前往[和风天气控制台]({qweather_console}),在项目中添加凭据，选择 **JSON Web Token** 并粘贴公钥。\r\n```text\n{public_key}\n```\r\n完成后,填写下方的 **项目ID** 和 **凭据ID**。留空 **Ed25519 私钥** 将使用这对自动生成的密钥；只有已在和风天气配置了配套公钥时，才粘贴已有的私钥。\r\n #### 注意：JWT方式，只能添加一次，重新添加集成，原有JWT凭据将无法使用。",
         "data": {
           "project_id": "项目 ID (Project ID)",
-          "key_id": "凭据 ID (Key ID)"
+          "key_id": "凭据 ID (Key ID)",
+          "private_key": "Ed25519 私钥（可选；留空自动生成）"
         }
       },
       "reuse_location": {
@@ -53,6 +54,7 @@
       "location_not_found": "未找到该位置，请尝试输入精准的“经度,纬度”",
       "data_not_available": "该地点暂无气象数据支持",
       "invalid_auth": "身份认证失败，请检查您的 Key 或 JWT 配置",
+      "invalid_private_key": "提供的私钥必须是有效、未加密的 Ed25519 PEM 私钥",
       "no_credit": "账号额度不足或已逾期，请检查和风控制台账单",
       "security_restriction": "请求违反了您在控制台设置的 IP 或安全限制",
       "invalid_host": "API Host 错误，请确保填写的是您的专属接口地址",
