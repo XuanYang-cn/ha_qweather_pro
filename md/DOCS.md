@@ -15,7 +15,7 @@ Go to the QWeather Console:
 2. Search for and select QWeather Pro.
 3. Fill in the following basic information:
    - API server address: `API host`
-   - Location: the verified Shanghai city or a coordinate; coordinates are
+   - Location: the verified configured city or a coordinate; coordinates are
      quantized before provider lookup.
 4. The integration automatically generates a Public Key for JWT authentication:
    - Copy this public key

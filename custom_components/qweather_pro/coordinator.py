@@ -66,6 +66,7 @@ class QWeatherUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self.warning_jurisdiction = warning_jurisdiction_from_config(dict(entry.data))
         self._location_verified = False
         self.city_name = entry.title
+        self._local_time_zone = dt_util.get_time_zone(hass.config.time_zone) or timezone.utc
         self._base_interval = timedelta(minutes=DEFAULT_UPDATE_INTERVAL)
 
         self.api = clients.qweather
@@ -644,6 +645,7 @@ class QWeatherUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 parsed_hourly,
                 dataset_status["hourly"],
                 refresh_time,
+                self._local_time_zone,
             ),
             "aqi": parsed_air,
             "warning": parsed_warnings,

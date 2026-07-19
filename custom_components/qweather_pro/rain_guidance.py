@@ -2,13 +2,11 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, tzinfo
 from math import isfinite
-from zoneinfo import ZoneInfo
 
 from .condition import CONDITION_MAP
 
-SHANGHAI = ZoneInfo("Asia/Shanghai")
 RAIN_STATES = frozenset({"rain_expected", "no_rain_expected", "unconfirmed"})
 RAIN_ICON_CODES = frozenset(
     str(code) for code in (*range(300, 319), 350, 351, 399)
@@ -75,9 +73,10 @@ def daily_rain_guidance(
     hourly: object,
     hourly_status: Mapping[str, object],
     now: datetime,
+    local_time_zone: tzinfo | None = None,
 ) -> dict[str, object]:
-    """Return the only three allowed same-Shanghai-day rain states."""
-    local_now = now.astimezone(SHANGHAI)
+    """Return the only three allowed same-configured-local-day rain states."""
+    local_now = now.astimezone(local_time_zone or now.tzinfo)
     end = local_now.replace(hour=23, minute=59, second=59, microsecond=999999)
     if not isinstance(hourly, list):
         return {"state": "unconfirmed", "window_end": end.isoformat()}
@@ -94,7 +93,7 @@ def daily_rain_guidance(
         if timestamp is None:
             malformed_hour = True
             continue
-        local_time = timestamp.astimezone(SHANGHAI)
+        local_time = timestamp.astimezone(local_now.tzinfo)
         if local_time in expected:
             if local_time in candidates:
                 malformed_hour = True

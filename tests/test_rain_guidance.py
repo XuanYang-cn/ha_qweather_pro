@@ -1,5 +1,5 @@
 """Same-day rain guidance boundaries."""
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
@@ -140,16 +140,23 @@ def test_only_the_expected_hour_timestamps_can_confirm_no_rain() -> None:
     )
 
 
-def test_shanghai_local_date_controls_the_forecast_window() -> None:
+def test_configured_local_date_controls_the_forecast_window() -> None:
     now = datetime.fromisoformat("2026-07-14T16:15:00+00:00")
     hourly = [
         hour("2026-07-14T23:00:00+08:00", pop=100),
         *hours_until_day_end(date="2026-07-15", first_hour=0),
     ]
     assert (
-        daily_rain_guidance(hourly, {"state": "fresh"}, now)["state"]
+        daily_rain_guidance(
+            hourly,
+            {"state": "fresh"},
+            now,
+            timezone(timedelta(hours=8)),
+        )["state"]
         == "no_rain_expected"
     )
+
+
 @pytest.mark.parametrize(
     "invalid_hour",
     [

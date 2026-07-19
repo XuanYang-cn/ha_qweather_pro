@@ -58,10 +58,6 @@ def quantize_location_input(location: str) -> str:
         return location.strip()
 
 
-def _warning_jurisdiction(location: dict[str, Any]) -> tuple[Any, Any, Any]:
-    return location.get("country"), location.get("adm1"), location.get("adm2")
-
-
 def _normalized_place_name(value: Any) -> str:
     return str(value or "").strip().casefold()
 
