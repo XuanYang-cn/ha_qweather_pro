@@ -194,6 +194,21 @@ def _patch_provider_clients(monkeypatch, clients: ProviderClients) -> None:
     )
 
 
+def _capture_platform_entities(hass):
+    """Forward platform setup and retain the public entities it creates."""
+    entities = []
+
+    async def forward_entry_setups(entry, platforms) -> None:
+        for platform in platforms:
+            module = importlib.import_module(
+                f"custom_components.qweather_pro.{platform.value}"
+            )
+            await module.async_setup_entry(hass, entry, entities.extend)
+
+    hass.config_entries.async_forward_entry_setups.side_effect = forward_entry_setups
+    return entities
+
+
 async def test_full_config_entry_uses_programmable_offline_clients(
     hass,
     monkeypatch,
@@ -217,16 +232,7 @@ async def test_full_config_entry_uses_programmable_offline_clients(
     }
     nationwide = FakeNationwideWarningClient(nationwide_snapshot)
     clients = ProviderClients(qweather=qweather, nationwide_warnings=nationwide)
-    entities = []
-
-    async def forward_entry_setups(entry, platforms) -> None:
-        for platform in platforms:
-            module = importlib.import_module(
-                f"custom_components.qweather_pro.{platform.value}"
-            )
-            await module.async_setup_entry(hass, entry, entities.extend)
-
-    hass.config_entries.async_forward_entry_setups.side_effect = forward_entry_setups
+    entities = _capture_platform_entities(hass)
     _patch_provider_clients(monkeypatch, clients)
     entry = _config_entry()
     assert CONF_PRIVATE_KEY not in entry.data
@@ -337,16 +343,7 @@ async def test_warning_info_exposes_one_atomic_household_contract(
         city_alerts=[city_warning],
         district_alerts=[district_warning],
     )
-    entities = []
-
-    async def forward_entry_setups(entry, platforms) -> None:
-        for platform in platforms:
-            module = importlib.import_module(
-                f"custom_components.qweather_pro.{platform.value}"
-            )
-            await module.async_setup_entry(hass, entry, entities.extend)
-
-    hass.config_entries.async_forward_entry_setups.side_effect = forward_entry_setups
+    entities = _capture_platform_entities(hass)
     _patch_provider_clients(
         monkeypatch,
         ProviderClients(
@@ -984,6 +981,45 @@ async def test_warning_failure_without_snapshot_is_unconfirmed(
     }
 
 
+async def test_warning_success_without_provider_timestamp_is_fresh(
+    hass,
+    monkeypatch,
+) -> None:
+    """A successful warning query is fresh even when the API omits snapshot time."""
+    qweather = FakeQWeatherClient()
+    qweather.warning_responses = {
+        ("30.00", "120.00"): {"code": "200", "alerts": [_warning("rain-city")]},
+        ("30.10", "120.10"): {"code": "200", "alerts": []},
+    }
+    entities = _capture_platform_entities(hass)
+    _patch_provider_clients(
+        monkeypatch,
+        ProviderClients(
+            qweather=qweather,
+            nationwide_warnings=FakeNationwideWarningClient({}),
+        ),
+    )
+
+    entry = _config_entry()
+
+    assert await integration.async_setup_entry(hass, entry)
+
+    warning_sensor = next(
+        entity
+        for entity in entities
+        if entity.unique_id == f"{entry.entry_id}_warning_info"
+    )
+
+    assert warning_sensor.native_value == "active"
+    attributes = warning_sensor.extra_state_attributes
+    status = attributes["warning_status"]
+    assert status["provider_time"] is None
+    assert status["last_success_time"] is not None
+    assert status["last_update_result"] == "success"
+    assert status["state"] == "fresh"
+    assert attributes["warning_contract"]["state"] == "active"
+
+
 async def test_warning_failure_retains_snapshot_until_successful_clear(
     hass,
     monkeypatch,
@@ -1081,16 +1117,7 @@ async def test_warning_successful_empty_without_provider_time_is_confirmed_clear
         qweather=qweather,
         nationwide_warnings=FakeNationwideWarningClient({}),
     )
-    entities = []
-
-    async def forward_entry_setups(entry, platforms) -> None:
-        for platform in platforms:
-            module = importlib.import_module(
-                f"custom_components.qweather_pro.{platform.value}"
-            )
-            await module.async_setup_entry(hass, entry, entities.extend)
-
-    hass.config_entries.async_forward_entry_setups.side_effect = forward_entry_setups
+    entities = _capture_platform_entities(hass)
     _patch_provider_clients(monkeypatch, clients)
     entry = _config_entry()
     assert await integration.async_setup_entry(hass, entry)
@@ -1271,16 +1298,7 @@ async def test_warning_sensor_marks_initial_failure_as_unconfirmed(
         qweather=qweather,
         nationwide_warnings=FakeNationwideWarningClient({}),
     )
-    entities = []
-
-    async def forward_entry_setups(entry, platforms) -> None:
-        for platform in platforms:
-            module = importlib.import_module(
-                f"custom_components.qweather_pro.{platform.value}"
-            )
-            await module.async_setup_entry(hass, entry, entities.extend)
-
-    hass.config_entries.async_forward_entry_setups.side_effect = forward_entry_setups
+    entities = _capture_platform_entities(hass)
     _patch_provider_clients(monkeypatch, clients)
     entry = _config_entry()
     assert await integration.async_setup_entry(hass, entry)

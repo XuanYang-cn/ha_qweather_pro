@@ -184,14 +184,14 @@ class QWeatherUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         return timestamp.astimezone(timezone.utc)
 
     @staticmethod
-    def _provider_time_is_current(
+    def _timestamp_is_current(
         category: str,
-        provider_time: datetime,
+        timestamp: datetime,
         refresh_time: datetime,
     ) -> bool:
-        """Require source data to be within the dataset's current interval."""
-        source_age = refresh_time - provider_time
-        return timedelta(0) <= source_age < DATASET_INTERVALS[category]
+        """Require a timestamp to be within the dataset's current interval."""
+        age = refresh_time - timestamp
+        return timedelta(0) <= age < DATASET_INTERVALS[category]
 
     def _dataset_statuses(self, now: datetime) -> dict[str, dict[str, str | None]]:
         """Publish independent freshness and result state for public datasets."""
@@ -205,9 +205,20 @@ class QWeatherUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 state = "unavailable"
             elif result in {"failed", "unchanged", "stale", "contract_error"}:
                 state = "stale"
-            elif last_success is None or provider_timestamp is None:
+            elif last_success is None:
                 state = "unavailable"
-            elif not self._provider_time_is_current(category, provider_timestamp, now):
+            elif provider_timestamp is None:
+                # The warning endpoint can authoritatively return the current
+                # alert set without a snapshot timestamp. A successful query is
+                # fresh only for its normal refresh interval; other datasets
+                # still require their provider timestamp.
+                state = (
+                    "fresh"
+                    if category == "warning"
+                    and self._timestamp_is_current(category, last_success, now)
+                    else "unavailable"
+                )
+            elif not self._timestamp_is_current(category, provider_timestamp, now):
                 state = "stale"
             else:
                 state = "fresh"
@@ -253,7 +264,7 @@ class QWeatherUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         ):
             self._last_update_results["warning"] = "unchanged"
             return
-        if provider_timestamp is not None and not self._provider_time_is_current(
+        if provider_timestamp is not None and not self._timestamp_is_current(
             "warning",
             provider_timestamp,
             refresh_time,
@@ -549,7 +560,7 @@ class QWeatherUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                         self._last_update_results[category] = "unavailable"
                     else:
                         self._last_update_results[category] = "unchanged"
-                elif category in STATUS_DATASETS and not self._provider_time_is_current(
+                elif category in STATUS_DATASETS and not self._timestamp_is_current(
                     category,
                     provider_timestamp,
                     refresh_time,
