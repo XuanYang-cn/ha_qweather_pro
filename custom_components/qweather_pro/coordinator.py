@@ -10,6 +10,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 from homeassistant.helpers.device_registry import DeviceEntryType, DeviceInfo
+from homeassistant.helpers.storage import Store
 import homeassistant.util.dt as dt_util
 
 from .clients import ProviderClients
@@ -35,6 +36,7 @@ from .household_warnings import (
     build_household_warning_contract,
 )
 from .rain_guidance import daily_rain_guidance
+from .warning_history import WarningHistory
 
 CORE_DATASETS = ("now", "daily", "hourly", "air")
 STATUS_DATASETS = (*CORE_DATASETS, "warning")
@@ -91,6 +93,12 @@ class QWeatherUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             dataset: "unavailable" for dataset in DATASET_INTERVALS
         }
         self._recent_warning_changes: dict[str, datetime] = {}
+        self._warning_history_store = Store[dict[str, Any]](
+            hass,
+            1,
+            f"{DOMAIN}.{entry.entry_id}.household_warning_history",
+        )
+        self._warning_history = WarningHistory(self._warning_history_key())
         self._household_warning_contract = self._empty_household_warning_contract(
             "uninitialized",
             None,
@@ -280,8 +288,35 @@ class QWeatherUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             "effective_warnings": [],
             "sources": {},
             "recent_changes": {},
+            "history": [],
             "published_at": now.isoformat() if now is not None else None,
         }
+
+    def _warning_history_key(self) -> str:
+        """Keep the private source-history key tied to one configured jurisdiction."""
+        if self.warning_jurisdiction is None:
+            return "unconfigured"
+        return "\x1f".join(
+            (
+                self.warning_jurisdiction.district_id,
+                self.warning_jurisdiction.city_id,
+                self.warning_jurisdiction.country,
+            )
+        )
+
+    async def async_load_warning_history(self) -> None:
+        """Restore the local warning timeline before the first coordinator refresh."""
+        now = self._now()
+        payload = await self._warning_history_store.async_load()
+        self._warning_history = WarningHistory.from_storage(
+            payload,
+            self._warning_history_key(),
+            now,
+        )
+        if payload is not None and self._warning_history.as_storage() != payload:
+            await self._warning_history_store.async_save(
+                self._warning_history.as_storage()
+            )
 
     def _set_household_warning_failure(self, state: str, now: datetime) -> None:
         """Hide local warning content whenever its household contract is unhealthy."""
@@ -309,7 +344,7 @@ class QWeatherUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     indexed.setdefault(hazard_id, {})[source_level] = dict(warning)
         return indexed
 
-    def _publish_household_warning_contract(
+    async def _publish_household_warning_contract(
         self, contract: dict[str, Any], now: datetime
     ) -> None:
         """Attach stable recent-change times before atomically publishing a snapshot."""
@@ -337,9 +372,12 @@ class QWeatherUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             hazard_id: changed_at.isoformat()
             for hazard_id, changed_at in sorted(self._recent_warning_changes.items())
         }
+        if self._warning_history.observe(contract, now):
+            await self._warning_history_store.async_save(self._warning_history.as_storage())
+        contract["history"] = self._warning_history.events
         self._household_warning_contract = contract
 
-    def _refresh_household_warning_contract(
+    async def _refresh_household_warning_contract(
         self,
         city_response: Mapping[str, Any],
         district_response: Mapping[str, Any],
@@ -366,7 +404,7 @@ class QWeatherUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 district_alerts=district_alerts,
                 now=now,
             )
-            self._publish_household_warning_contract(contract, now)
+            await self._publish_household_warning_contract(contract, now)
         except WarningContractError:
             self._last_update_results["warning"] = "contract_error"
             self._set_household_warning_failure("contract_error", now)
@@ -420,7 +458,7 @@ class QWeatherUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 refresh_time,
             )
             if self._last_update_results["warning"] == "success":
-                self._refresh_household_warning_contract(
+                await self._refresh_household_warning_contract(
                     city_response,
                     district_response,
                     refresh_time,

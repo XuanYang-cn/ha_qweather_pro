@@ -365,6 +365,11 @@ async def test_warning_info_exposes_one_atomic_household_contract(
     contract = warning_sensor.extra_state_attributes["warning_contract"]
     assert contract["effective_warnings"][0]["source_level"] == "district"
     assert contract["effective_warnings"][0]["level"] == "red"
+    assert {event["source_level"] for event in contract["history"]} == {
+        "city",
+        "district",
+    }
+    assert {event["action"] for event in contract["history"]} == {"issued"}
 
     initial_success = coordinator.data["dataset_status"]["warning"]["last_success_time"]
     clock = MutableClock(datetime.fromisoformat(initial_success))
@@ -378,6 +383,7 @@ async def test_warning_info_exposes_one_atomic_household_contract(
 
     assert warning_sensor.native_value == "failed"
     assert warning_sensor.extra_state_attributes["warnings"] == []
+    assert warning_sensor.extra_state_attributes["warning_contract"]["history"] == []
 
     _set_warning_source_responses(
         qweather,
@@ -412,6 +418,10 @@ async def test_warning_info_exposes_one_atomic_household_contract(
 
     assert warning_sensor.native_value == "clear"
     assert warning_sensor.extra_state_attributes["warnings"] == []
+    assert [
+        event["action"]
+        for event in warning_sensor.extra_state_attributes["warning_contract"]["history"][:2]
+    ] == ["cleared", "cleared"]
 
 
 async def test_missing_warning_jurisdiction_is_distinct_from_a_successful_clear(
@@ -438,6 +448,7 @@ async def test_missing_warning_jurisdiction_is_distinct_from_a_successful_clear(
         "effective_warnings": [],
         "sources": {},
         "recent_changes": {},
+        "history": [],
         "published_at": "2026-07-14T00:00:00+00:00",
     }
     assert qweather.warning_calls == []

@@ -458,5 +458,6 @@ def build_household_warning_contract(
             "district": _source_snapshot(district),
         },
         "recent_changes": recent_changes,
+        "history": [],
         "published_at": now.isoformat(),
     }

@@ -32,7 +32,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: QWeatherConfigEntry) -> 
         clients.nationwide_warnings,
     )
     
-    # 执行初次刷新获取数据
+    # 先恢复只保存在 Home Assistant 本地的预警轨迹，再执行首次刷新。
+    await coordinator.async_load_warning_history()
     await coordinator.async_config_entry_first_refresh()
     await nationwide_warning_coordinator.async_config_entry_first_refresh()
     coordinator.nationwide_warning_coordinator = nationwide_warning_coordinator
