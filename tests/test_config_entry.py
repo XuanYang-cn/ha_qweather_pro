@@ -648,11 +648,11 @@ async def test_weather_datasets_keep_independent_stale_and_recovery_states(
     assert coordinator.data["now"]["temp"] == 25.0
 
 
-async def test_unchanged_provider_observation_remains_stale(
+async def test_unchanged_hourly_provider_observation_stays_fresh_until_expiry(
     hass,
     monkeypatch,
 ) -> None:
-    """A repeated provider observation cannot become fresh by being re-fetched."""
+    """A provider's hourly observation remains usable between refresh polls."""
     qweather = FakeQWeatherClient()
     clients = ProviderClients(
         qweather=qweather,
@@ -672,10 +672,70 @@ async def test_unchanged_provider_observation_remains_stale(
 
     assert coordinator.data["dataset_status"]["now"] == {
         "provider_time": "2026-07-14T08:00+08:00",
+        "last_success_time": clock.now().isoformat(),
+        "last_update_result": "success",
+        "state": "fresh",
+    }
+
+
+async def test_unchanged_hourly_observation_expires_after_one_hour(
+    hass,
+    monkeypatch,
+) -> None:
+    """Repeated current weather still fails closed after its source-age window."""
+    qweather = FakeQWeatherClient()
+    _patch_provider_clients(
+        monkeypatch,
+        ProviderClients(
+            qweather=qweather,
+            nationwide_warnings=FakeNationwideWarningClient({}),
+        ),
+    )
+    entry = _config_entry()
+
+    assert await integration.async_setup_entry(hass, entry)
+    coordinator = entry.runtime_data
+    initial_status = coordinator.data["dataset_status"]["now"]
+    clock = MutableClock(datetime.fromisoformat(initial_status["last_success_time"]))
+    monkeypatch.setattr(coordinator, "_now", clock.now)
+    clock.advance(timedelta(minutes=60))
+
+    await coordinator.async_refresh()
+
+    assert coordinator.data["dataset_status"]["now"] == {
+        "provider_time": "2026-07-14T08:00+08:00",
         "last_success_time": initial_status["last_success_time"],
         "last_update_result": "unchanged",
         "state": "stale",
     }
+
+
+async def test_air_snapshot_without_provider_time_remains_unavailable(
+    hass,
+    monkeypatch,
+) -> None:
+    """AQI without source time fails closed rather than using local receipt time."""
+    qweather = FakeQWeatherClient()
+    qweather.responses["air"]["indexes"][0].pop("pubTime")
+    entities = _capture_platform_entities(hass)
+    _patch_provider_clients(
+        monkeypatch,
+        ProviderClients(
+            qweather=qweather,
+            nationwide_warnings=FakeNationwideWarningClient({}),
+        ),
+    )
+    entry = _config_entry()
+
+    assert await integration.async_setup_entry(hass, entry)
+
+    aqi_sensor = next(
+        entity for entity in entities if entity.unique_id == f"{entry.entry_id}_aqi"
+    )
+    air_status = aqi_sensor.extra_state_attributes["dataset_status"]["air"]
+    assert air_status["provider_time"] is None
+    assert air_status["last_update_result"] == "unavailable"
+    assert air_status["state"] == "unavailable"
 
 
 async def test_regressing_provider_observation_remains_stale(

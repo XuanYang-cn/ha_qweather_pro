@@ -48,6 +48,12 @@ DATASET_INTERVALS = {
     "warning": timedelta(minutes=30),
     "indices": timedelta(minutes=180),
 }
+SOURCE_FRESHNESS_WINDOWS = {
+    **DATASET_INTERVALS,
+    # The provider's observation timestamp can advance hourly even though the
+    # current-weather endpoint is polled every ten minutes.
+    "now": timedelta(hours=1),
+}
 
 class QWeatherUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     """QWeather 数据异步调度中心."""
@@ -189,9 +195,9 @@ class QWeatherUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         timestamp: datetime,
         refresh_time: datetime,
     ) -> bool:
-        """Require a timestamp to be within the dataset's current interval."""
+        """Require a source timestamp to be within its freshness window."""
         age = refresh_time - timestamp
-        return timedelta(0) <= age < DATASET_INTERVALS[category]
+        return timedelta(0) <= age < SOURCE_FRESHNESS_WINDOWS[category]
 
     def _dataset_statuses(self, now: datetime) -> dict[str, dict[str, str | None]]:
         """Publish independent freshness and result state for public datasets."""
@@ -548,18 +554,28 @@ class QWeatherUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 provider_time = self._provider_time_from_response(category, response)
                 provider_timestamp = self._parse_provider_time(provider_time)
                 previous_provider_timestamp = self._latest_provider_times.get(category)
-                if category in STATUS_DATASETS and (
-                    provider_timestamp is None
-                    or (
-                        previous_provider_timestamp is not None
-                        and provider_timestamp <= previous_provider_timestamp
-                    )
-                ):
+                if category in STATUS_DATASETS and provider_timestamp is None:
                     if previous_provider_timestamp is None:
                         self._cache_data[category] = dict(response)
                         self._last_update_results[category] = "unavailable"
                     else:
                         self._last_update_results[category] = "unchanged"
+                elif (
+                    category == "now"
+                    and previous_provider_timestamp == provider_timestamp
+                    and self._timestamp_is_current(
+                        category, provider_timestamp, refresh_time
+                    )
+                ):
+                    self._cache_data[category] = dict(response)
+                    self._last_success_times[category] = refresh_time
+                    self._last_update_results[category] = "success"
+                elif (
+                    category in STATUS_DATASETS
+                    and previous_provider_timestamp is not None
+                    and provider_timestamp <= previous_provider_timestamp
+                ):
+                    self._last_update_results[category] = "unchanged"
                 elif category in STATUS_DATASETS and not self._timestamp_is_current(
                     category,
                     provider_timestamp,
