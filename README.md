@@ -20,7 +20,8 @@ This personal fork focuses on trustworthy provider data and stable Home Assistan
 entities. Dashboard and detail UI are owned by the separate Home Assistant
 operations repository rather than auto-registered by this integration.
 Its first version is limited to one configured household; setup verifies that
-the privacy-quantized location remains in the configured warning jurisdiction.
+the privacy-quantized location resolves to the configured weather area. The
+separate warning-jurisdiction flow verifies its selected district independently.
 
 ## ✨ Core Features
 
@@ -34,7 +35,7 @@ the privacy-quantized location remains in the configured warning jurisdiction.
 
 - 📊 **Provider Data**
   - Standard city current conditions, hourly and daily forecasts, AQI, and local alerts.
-  - Privacy-quantized coordinates with a warning-jurisdiction verification step.
+  - Privacy-quantized weather coordinates and independently verified warning jurisdiction.
   - Minute precipitation and grid-weather calls are disabled in the first fork version.
 
 - 🎨 **Data-only Frontend Contract**

@@ -26,10 +26,12 @@ put it in fixtures or release archives, or print it in logs. Tests use synthetic
 synthetic locations and injected fake clients; they make no cloud requests.
 
 The first fork version always uses standard city weather, quantizes provider
-coordinates to a `0.05°` grid, verifies before weather requests that the
-quantized point remains in the configured warning jurisdiction (including
-for older config entries), disables grid and minute weather calls, and does not
-auto-register the upstream dashboard card or custom more-info UI.
+coordinates to a `0.05°` grid, and verifies before weather requests that the
+quantized point resolves to the configured weather location (including for
+older config entries). The separately configurable warning jurisdiction
+validates its selected district through its own flow. The fork disables grid
+and minute weather calls and does not auto-register the upstream dashboard card
+or custom more-info UI.
 
 ## Rebuilding and releasing the branch
 

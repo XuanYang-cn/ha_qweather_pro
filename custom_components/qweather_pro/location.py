@@ -75,23 +75,34 @@ def _required_location_value(location: Mapping[str, Any], field: str) -> str:
     )
 
 
-def verified_configured_location(response: Mapping[str, Any]) -> dict[str, Any]:
-    """Return a structured provider location without embedding a household place."""
+def verified_configured_location(
+    response: Mapping[str, Any], *, configured_location: str
+) -> dict[str, Any]:
+    """Return the one structured provider location matching saved weather coordinates."""
+    coordinates = quantize_location_input(configured_location)
+    longitude, separator, latitude = coordinates.partition(",")
+    if not separator:
+        raise QuantizedLocationMismatch("Configured weather coordinates are unavailable")
     candidates = response.get("location", []) if response.get("code") == "200" else []
-    try:
-        return next(
-            candidate
-            for candidate in candidates
-            if isinstance(candidate, dict)
-            and all(
-                _required_location_value(candidate, field)
-                for field in ("id", "country", "adm1", "adm2", "lon", "lat")
-            )
+    matches = [
+        candidate
+        for candidate in candidates
+        if isinstance(candidate, dict)
+        and all(
+            _required_location_value(candidate, field)
+            for field in ("id", "country", "adm1", "adm2", "lon", "lat")
         )
-    except StopIteration as error:
+        and quantize_coordinates(
+            _required_location_value(candidate, "lon"),
+            _required_location_value(candidate, "lat"),
+        )
+        == quantize_coordinates(longitude, latitude)
+    ]
+    if len(matches) != 1:
         raise QuantizedLocationMismatch(
-            "Provider did not return a structured configured location"
-        ) from error
+            "Provider did not return one configured weather location"
+        )
+    return matches[0]
 
 
 def city_candidate_for_district(

@@ -129,7 +129,7 @@ def _set_warning_source_responses(
     """Program the city and district requests independently at the public seam."""
     qweather.warning_responses = {
         ("30.00", "120.00"): _warning_response(city_alerts, update_time=update_time),
-        ("31.10", "121.60"): _warning_response(
+        ("30.10", "120.10"): _warning_response(
             district_alerts,
             update_time=update_time,
         ),
@@ -139,7 +139,7 @@ def _set_warning_source_responses(
 def _config_entry(*, include_warning_jurisdiction: bool = True) -> ConfigEntry:
     data = {
             CONF_HOST: "weather-api.example.invalid",
-            CONF_LOCATION_ID: "121.4737,31.2304",
+            CONF_LOCATION_ID: "120.004,30.004",
             CONF_USE_TOKEN: True,
             CONF_PROJECT_ID: "synthetic-project",
             CONF_KEY_ID: "synthetic-key-id",
@@ -152,7 +152,7 @@ def _config_entry(*, include_warning_jurisdiction: bool = True) -> ConfigEntry:
             CONF_WARNING_CITY_ID: "synthetic-city",
             CONF_WARNING_CITY_NAME: "Synthetic City",
             CONF_WARNING_COUNTRY: "Synthetic Country",
-            CONF_WARNING_LOCATION_COORDINATES: "121.60,31.10",
+            CONF_WARNING_LOCATION_COORDINATES: "120.10,30.10",
             }
         )
     return ConfigEntry(
@@ -233,10 +233,10 @@ async def test_full_config_entry_uses_programmable_offline_clients(
 
     assert await integration.async_setup_entry(hass, entry)
 
-    assert qweather.weather_now_calls == [("31.25", "121.45", "zh")]
+    assert qweather.weather_now_calls == [("30.00", "120.00", "zh")]
     assert qweather.warning_calls == [
         ("30.00", "120.00", "zh"),
-        ("31.10", "121.60", "zh"),
+        ("30.10", "120.10", "zh"),
     ]
     assert qweather.calls == [
         "location",
@@ -250,7 +250,7 @@ async def test_full_config_entry_uses_programmable_offline_clients(
         "warning",
     ]
     assert qweather.location_calls == [
-        ("121.45,31.25", "zh"),
+        ("120.00,30.00", "zh"),
         ("synthetic-city", "zh"),
     ]
     assert nationwide.calls == 1
@@ -378,7 +378,7 @@ async def test_warning_info_exposes_one_atomic_household_contract(
     monkeypatch.setattr(coordinator, "_now", clock.now)
     qweather.warning_responses = {
         ("30.00", "120.00"): {"code": "429"},
-        ("31.10", "121.60"): {"code": "429"},
+        ("30.10", "120.10"): {"code": "429"},
     }
     clock.advance(timedelta(minutes=30))
     await coordinator.async_refresh()
@@ -454,7 +454,7 @@ async def test_missing_warning_jurisdiction_is_distinct_from_a_successful_clear(
         "published_at": "2026-07-14T00:00:00+00:00",
     }
     assert qweather.warning_calls == []
-    assert qweather.weather_now_calls == [("31.25", "121.45", "zh")]
+    assert qweather.weather_now_calls == [("30.00", "120.00", "zh")]
 
 
 async def test_mismatched_city_and_district_source_times_are_an_atomic_contract_error(
@@ -468,7 +468,7 @@ async def test_mismatched_city_and_district_source_times_are_an_atomic_contract_
             [_warning("city-rain")],
             update_time="2026-07-14T08:00+08:00",
         ),
-        ("31.10", "121.60"): _warning_response(
+        ("30.10", "120.10"): _warning_response(
             [_warning("district-rain", scope="district")],
             update_time="2026-07-14T08:01+08:00",
         ),
@@ -488,19 +488,23 @@ async def test_mismatched_city_and_district_source_times_are_an_atomic_contract_
     assert entry.runtime_data.data["warning"] == []
 
 
-async def test_existing_entry_with_an_unstructured_location_fails_before_weather_requests(
+async def test_existing_entry_with_a_mismatched_structured_location_fails_before_weather_requests(
     hass,
     monkeypatch,
 ) -> None:
-    """Preserve entry identity but reject an invalid runtime location response."""
+    """Reject a wrong weather area even when an older entry has no warning config."""
     qweather = FakeQWeatherClient()
     qweather.responses["location"] = {
         "code": "200",
         "location": [
             {
-                "country": "中国",
-                "adm1": "江苏省",
-                "adm2": "苏州市",
+                "id": "synthetic-other-district",
+                "name": "Synthetic Other District",
+                "country": "Synthetic Country",
+                "adm1": "Synthetic Province",
+                "adm2": "Synthetic City",
+                "lon": "120.10",
+                "lat": "30.10",
             }
         ],
     }
@@ -509,13 +513,13 @@ async def test_existing_entry_with_an_unstructured_location_fails_before_weather
         nationwide_warnings=FakeNationwideWarningClient({}),
     )
     _patch_provider_clients(monkeypatch, clients)
-    entry = _config_entry()
+    entry = _config_entry(include_warning_jurisdiction=False)
 
     with pytest.raises(ConfigEntryNotReady):
         await integration.async_setup_entry(hass, entry)
 
     assert entry.unique_id == "qw_120.00_30.00"
-    assert qweather.location_calls == [("121.45,31.25", "zh")]
+    assert qweather.location_calls == [("120.00,30.00", "zh")]
     assert qweather.calls == ["location"]
 
 

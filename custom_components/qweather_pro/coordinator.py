@@ -489,7 +489,10 @@ class QWeatherUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     self.location,
                     lang="zh",
                 )
-                verified_configured_location(location_response)
+                verified_configured_location(
+                    location_response,
+                    configured_location=self.location,
+                )
             except Exception as err:
                 raise UpdateFailed(
                     "Configured location could not be verified"
