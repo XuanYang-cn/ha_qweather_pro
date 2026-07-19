@@ -26,7 +26,7 @@ from .condition import CONDITION_MAP
 from .location import (
     QuantizedLocationMismatch,
     quantize_location_input,
-    verified_shanghai_location,
+    verified_configured_location,
     warning_city_coordinates,
     warning_jurisdiction_from_config,
 )
@@ -488,10 +488,10 @@ class QWeatherUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     self.location,
                     lang="zh",
                 )
-                verified_shanghai_location(location_response)
+                verified_configured_location(location_response)
             except Exception as err:
                 raise UpdateFailed(
-                    "Configured location is outside the expected Shanghai jurisdiction"
+                    "Configured location could not be verified"
                 ) from err
             self._location_verified = True
 

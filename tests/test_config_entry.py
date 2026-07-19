@@ -80,7 +80,7 @@ def _warning(
     scope: str = "city",
     expire_time: str = "2026-07-14T09:00+08:00",
 ) -> dict[str, object]:
-    """Create a synthetic active Shanghai QWeather warning response item."""
+    """Create a synthetic active QWeather warning response item."""
     location = (
         {
             "id": "synthetic-city",
@@ -103,7 +103,7 @@ def _warning(
         "headline": headline,
         "description": f"{headline} details",
         "instruction": "Stay indoors",
-        "senderName": "Shanghai Meteorological Service",
+        "senderName": "Synthetic Meteorological Service",
         "issuedTime": "2026-07-14T08:00+08:00",
         "effectiveTime": "2026-07-14T08:00+08:00",
         "expireTime": expire_time,
@@ -170,8 +170,8 @@ def _config_entry(*, include_warning_jurisdiction: bool = True) -> ConfigEntry:
         source="user",
         state=ConfigEntryState.SETUP_IN_PROGRESS,
         subentries_data=(),
-        title="Synthetic Shanghai",
-        unique_id="qw_121.47_31.23",
+        title="Synthetic City",
+        unique_id="qw_120.00_30.00",
         version=1,
     )
 
@@ -488,11 +488,11 @@ async def test_mismatched_city_and_district_source_times_are_an_atomic_contract_
     assert entry.runtime_data.data["warning"] == []
 
 
-async def test_existing_non_shanghai_entry_fails_before_weather_requests(
+async def test_existing_entry_with_an_unstructured_location_fails_before_weather_requests(
     hass,
     monkeypatch,
 ) -> None:
-    """Preserve entry identity but reject an unexpected runtime jurisdiction."""
+    """Preserve entry identity but reject an invalid runtime location response."""
     qweather = FakeQWeatherClient()
     qweather.responses["location"] = {
         "code": "200",
@@ -514,7 +514,7 @@ async def test_existing_non_shanghai_entry_fails_before_weather_requests(
     with pytest.raises(ConfigEntryNotReady):
         await integration.async_setup_entry(hass, entry)
 
-    assert entry.unique_id == "qw_121.47_31.23"
+    assert entry.unique_id == "qw_120.00_30.00"
     assert qweather.location_calls == [("121.45,31.25", "zh")]
     assert qweather.calls == ["location"]
 
@@ -889,7 +889,7 @@ async def test_local_warning_contract_preserves_all_active_warning_fields(
     hass,
     monkeypatch,
 ) -> None:
-    """One successful response keeps every active Shanghai warning separately."""
+    """One successful response keeps every active warning separately."""
     qweather = FakeQWeatherClient()
     _set_warning_source_responses(
         qweather,
@@ -939,7 +939,7 @@ async def test_local_warning_contract_preserves_all_active_warning_fields(
         "title": "Synthetic rain warning",
         "text": "Synthetic rain warning details",
         "instruction": "Stay indoors",
-        "sender": "Shanghai Meteorological Service",
+        "sender": "Synthetic Meteorological Service",
         "issued": "2026-07-14T08:00+08:00",
         "effective": "2026-07-14T08:00+08:00",
         "expires": "2026-07-14T09:00+08:00",
@@ -1174,7 +1174,7 @@ async def test_successful_warning_snapshot_replaces_disappeared_hazards(
             "title": "Synthetic rain warning revised",
             "text": "Synthetic rain warning revised details",
             "instruction": "Stay indoors",
-            "sender": "Shanghai Meteorological Service",
+            "sender": "Synthetic Meteorological Service",
             "source": "QWeather",
             "source_count": 1,
         }

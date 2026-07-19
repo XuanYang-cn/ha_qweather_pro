@@ -11,7 +11,7 @@
       },      
       "setup": {
         "title": "配置和风天气Pro",
-        "description": "### 添加步骤\r\n前往[和风天气控制台]({qweather_console})，复制账户专属 **API Host**，并创建 **JSON Web Token** 凭据。下方可输入城市、城市 ID 或经纬度；坐标会在查询前量化，并且必须仍属于预期的上海气象预警辖区。",
+        "description": "### 添加步骤\r\n前往[和风天气控制台]({qweather_console})，复制账户专属 **API Host**，并创建 **JSON Web Token** 凭据。下方可输入城市、城市 ID 或经纬度；坐标会在查询前量化，并且必须仍属于已配置的气象预警辖区。",
         "data": {
           "host": "API 服务器地址(API Host)",
           "location_id": "城市、城市 ID 或经纬度（经度在前）"
@@ -178,7 +178,7 @@
           "unconfirmed": "无法确认"
         },
         "state_attributes": {
-          "window_end": { "name": "上海当天判断结束时间" },
+          "window_end": { "name": "本地当天判断结束时间" },
           "hourly_status": { "name": "小时预报状态" }
         }
       },

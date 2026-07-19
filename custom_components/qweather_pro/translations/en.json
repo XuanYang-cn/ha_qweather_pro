@@ -11,7 +11,7 @@
       },      
       "setup": {
         "title": "Configure QWeather Pro",
-        "description": "### Setup Steps\r\nGo to the [QWeather Console]({qweather_console}), copy the account-specific **API Host**, and create a **JSON Web Token** credential. Enter a city, city ID, or longitude/latitude below. Coordinate input is quantized before lookup and must remain in the expected Shanghai warning jurisdiction.",
+        "description": "### Setup Steps\r\nGo to the [QWeather Console]({qweather_console}), copy the account-specific **API Host**, and create a **JSON Web Token** credential. Enter a city, city ID, or longitude/latitude below. Coordinate input is quantized before lookup and must remain in the configured warning jurisdiction.",
         "data": {
           "host": "API Host",
           "location_id": "City, city ID, or longitude/latitude (longitude first)"
@@ -178,7 +178,7 @@
           "unconfirmed": "Rain unconfirmed"
         },
         "state_attributes": {
-          "window_end": { "name": "Shanghai-day window end" },
+          "window_end": { "name": "Local-day window end" },
           "hourly_status": { "name": "Hourly forecast status" }
         }
       },

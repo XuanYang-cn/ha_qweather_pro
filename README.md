@@ -19,8 +19,8 @@
 This personal fork focuses on trustworthy provider data and stable Home Assistant
 entities. Dashboard and detail UI are owned by the separate Home Assistant
 operations repository rather than auto-registered by this integration.
-Its first version is limited to one Shanghai household; setup verifies that the
-privacy-quantized location remains in the Shanghai warning jurisdiction.
+Its first version is limited to one configured household; setup verifies that
+the privacy-quantized location remains in the configured warning jurisdiction.
 
 ## ✨ Core Features
 
@@ -38,21 +38,21 @@ privacy-quantized location remains in the Shanghai warning jurisdiction.
   - Minute precipitation and grid-weather calls are disabled in the first fork version.
 
 - 🎨 **Data-only Frontend Contract**
-  - The bundled upstream card and custom more-info files are not auto-registered.
+- Retired upstream card and custom more-info files are not packaged or registered.
   - Repository-owned Lovelace UI consumes the integration entities instead.
 
 - 🔄 **Latest Standards**  
   - Compatible with Home Assistant 2026.3+ and its WebSocket forecast subscription.
 
-## 🌏 Shanghai scope and localization
+## 🌏 Configured-household scope and localization
 
 This initial personal fork is not a worldwide integration. It supports the
-verified Shanghai location configured for this household and shows provider data
+verified location configured for this household and shows provider data
 in Home Assistant's selected language where QWeather supplies it.
 
 - **Automatic language sync**: The integration requests data in Home Assistant's
   configured language where the provider supports it.
-- **Localized title**: During setup, the verified Shanghai location name becomes
+- **Localized title**: During setup, the verified configured location name becomes
   the config-entry title.
 
 ## 📦 Installation

@@ -16,14 +16,14 @@ from custom_components.qweather_pro.location import (
 )
 
 
-SYNTHETIC_SHANGHAI = {
-    "id": "synthetic-shanghai",
-    "name": "上海",
-    "country": "中国",
-    "adm1": "上海市",
-    "adm2": "上海市",
-    "lon": "121.4737",
-    "lat": "31.2304",
+SYNTHETIC_LOCATION = {
+    "id": "synthetic-city",
+    "name": "Synthetic City",
+    "country": "Synthetic Country",
+    "adm1": "Synthetic Province",
+    "adm2": "Synthetic City",
+    "lon": "120.004",
+    "lat": "30.004",
 }
 
 
@@ -38,57 +38,53 @@ class FakeLookupClient:
 
 
 def test_coordinates_are_quantized_to_an_approximately_five_kilometre_grid() -> None:
-    assert quantize_coordinates("121.4737", "31.2304") == "121.45,31.25"
+    assert quantize_coordinates("120.004", "30.004") == "120.00,30.00"
 
 
 def test_coordinate_input_is_quantized_before_lookup_but_city_names_are_preserved() -> None:
-    assert quantize_location_input("121.4737, 31.2304") == "121.45,31.25"
-    assert quantize_location_input("上海市") == "上海市"
+    assert quantize_location_input("120.004, 30.004") == "120.00,30.00"
+    assert quantize_location_input("Synthetic City") == "Synthetic City"
 
 
-async def test_non_shanghai_location_fails_even_when_quantized_jurisdiction_matches() -> None:
-    suzhou = {
-        **SYNTHETIC_SHANGHAI,
-        "name": "苏州",
-        "adm1": "江苏省",
-        "adm2": "苏州市",
+async def test_quantized_location_requires_the_selected_provider_id() -> None:
+    different_location = {
+        **SYNTHETIC_LOCATION,
+        "id": "different-city",
     }
-    client = FakeLookupClient([suzhou])
+    client = FakeLookupClient([different_location])
 
     with pytest.raises(QuantizedLocationMismatch):
         await async_quantize_and_verify_location(
             client,
-            suzhou,
+            SYNTHETIC_LOCATION,
             language="zh",
         )
 
 
 async def test_quantized_point_must_remain_in_the_same_warning_jurisdiction() -> None:
     verified = {
-        **SYNTHETIC_SHANGHAI,
-        "id": "synthetic-quantized-shanghai",
-        "lon": "121.45",
-        "lat": "31.25",
+        **SYNTHETIC_LOCATION,
+        "lon": "120.00",
+        "lat": "30.00",
     }
     client = FakeLookupClient([verified])
 
     coordinates = await async_quantize_and_verify_location(
         client,
-        SYNTHETIC_SHANGHAI,
+        SYNTHETIC_LOCATION,
         language="zh",
     )
 
-    assert coordinates == "121.45,31.25"
-    assert client.calls == [("121.45,31.25", "zh")]
+    assert coordinates == "120.00,30.00"
+    assert client.calls == [("120.00,30.00", "zh")]
 
 
 async def test_quantized_point_fails_closed_outside_the_original_jurisdiction() -> None:
     client = FakeLookupClient(
         [
             {
-                **SYNTHETIC_SHANGHAI,
-                "adm1": "江苏省",
-                "adm2": "苏州市",
+                **SYNTHETIC_LOCATION,
+                "id": "other-city",
             }
         ]
     )
@@ -96,7 +92,7 @@ async def test_quantized_point_fails_closed_outside_the_original_jurisdiction() 
     with pytest.raises(QuantizedLocationMismatch):
         await async_quantize_and_verify_location(
             client,
-            SYNTHETIC_SHANGHAI,
+            SYNTHETIC_LOCATION,
             language="zh",
         )
 

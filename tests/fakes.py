@@ -19,13 +19,13 @@ QWEATHER_RESPONSES = {
         "code": "200",
         "location": [
             {
-                "id": "synthetic-shanghai",
-                "name": "上海",
-                "country": "中国",
-                "adm1": "上海市",
-                "adm2": "上海市",
-                "lon": "121.45",
-                "lat": "31.25",
+                "id": "synthetic-city",
+                "name": "Synthetic City",
+                "country": "Synthetic Country",
+                "adm1": "Synthetic Province",
+                "adm2": "Synthetic City",
+                "lon": "120.00",
+                "lat": "30.00",
             }
         ],
     },
