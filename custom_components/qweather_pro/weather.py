@@ -19,6 +19,7 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import ATTRIBUTION
 from .coordinator import QWeatherUpdateCoordinator
+from .entity_identity import public_entity_id
 
 # 定义天气描述符
 QWEATHER_WEATHER_DESCRIPTION = WeatherEntityDescription(
@@ -51,6 +52,7 @@ class HeFengWeather(CoordinatorEntity[QWeatherUpdateCoordinator], WeatherEntity)
         self.entity_description = description
 
         self._attr_unique_id = f"{entry.entry_id}_{description.key}"
+        self.entity_id = public_entity_id(description.key)
         self._attr_translation_key = description.translation_key
 
         # 直接引用 coordinator 中定义好的设备信息

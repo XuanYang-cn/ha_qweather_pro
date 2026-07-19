@@ -34,6 +34,7 @@ from custom_components.qweather_pro.const import (
     DOMAIN,
     PLATFORMS,
 )
+from custom_components.qweather_pro.entity_identity import PUBLIC_ENTITY_IDS
 
 from .fakes import FakeNationwideWarningClient, FakeQWeatherClient
 
@@ -275,6 +276,7 @@ async def test_full_config_entry_uses_programmable_offline_clients(
         f"{entry.entry_id}_weather_summary",
         f"{entry.entry_id}_weather",
     }
+    assert {entity.entity_id for entity in entities} == set(PUBLIC_ENTITY_IDS.values())
     weather = next(
         entity for entity in entities if entity.unique_id == f"{entry.entry_id}_weather"
     )

@@ -3,12 +3,14 @@ from __future__ import annotations
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
-from homeassistant.exceptions import ConfigEntryAuthFailed
+from homeassistant.exceptions import ConfigEntryAuthFailed, ConfigEntryError
+from homeassistant.helpers import entity_registry as er
 from homeassistant.loader import async_get_integration
 
 from .clients import JWTConfigurationError, create_provider_clients
 from .const import DOMAIN, PLATFORMS
 from .coordinator import QWeatherUpdateCoordinator
+from .entity_identity import EntityIdentityMigrationError, migrate_public_entity_ids
 from .nationwide_warnings import NationwideWarningCoordinator
 
 # 定义强类型别名，便于 IDE 补全 runtime_data
@@ -16,6 +18,11 @@ type QWeatherConfigEntry = ConfigEntry[QWeatherUpdateCoordinator]
 
 async def async_setup_entry(hass: HomeAssistant, entry: QWeatherConfigEntry) -> bool:
     """设置配置条目."""
+    try:
+        migrate_public_entity_ids(er.async_get(hass), entry.entry_id)
+    except EntityIdentityMigrationError as error:
+        raise ConfigEntryError("QWeather public entity migration requires attention") from error
+
     integration = await async_get_integration(hass, DOMAIN)
     version = str(integration.version) if integration.version else "1.0.0"
 
