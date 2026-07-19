@@ -88,14 +88,11 @@ class QWeatherUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._last_update_results: dict[str, str] = {
             dataset: "unavailable" for dataset in DATASET_INTERVALS
         }
-        self._household_warning_contract: dict[str, Any] = {
-            "state": "uninitialized",
-            "jurisdiction": None,
-            "effective_warnings": [],
-            "sources": {},
-            "recent_changes": {},
-            "published_at": None,
-        }
+        self._recent_warning_changes: dict[str, datetime] = {}
+        self._household_warning_contract = self._empty_household_warning_contract(
+            "uninitialized",
+            None,
+        )
 
     def _now(self) -> datetime:
         """Return the refresh time through one controllable contract seam."""
@@ -251,9 +248,11 @@ class QWeatherUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         if provider_timestamp is not None:
             self._latest_provider_times["warning"] = provider_timestamp
 
-    def _set_household_warning_failure(self, state: str, now: datetime) -> None:
+    def _empty_household_warning_contract(
+        self, state: str, now: datetime | None
+    ) -> dict[str, Any]:
         """Hide local warning content whenever its household contract is unhealthy."""
-        self._household_warning_contract = {
+        return {
             "state": state,
             "jurisdiction": (
                 self.warning_jurisdiction.label if self.warning_jurisdiction else None
@@ -261,8 +260,64 @@ class QWeatherUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             "effective_warnings": [],
             "sources": {},
             "recent_changes": {},
-            "published_at": now.isoformat(),
+            "published_at": now.isoformat() if now is not None else None,
         }
+
+    def _set_household_warning_failure(self, state: str, now: datetime) -> None:
+        """Hide local warning content whenever its household contract is unhealthy."""
+        self._household_warning_contract = self._empty_household_warning_contract(
+            state,
+            now,
+        )
+
+    @staticmethod
+    def _warning_sources_by_hazard(contract: Mapping[str, Any]) -> dict[str, dict[str, Any]]:
+        """Index public source records by their stable hazard identity."""
+        indexed: dict[str, dict[str, Any]] = {}
+        sources = contract.get("sources")
+        if not isinstance(sources, Mapping):
+            return indexed
+        for source_level in ("city", "district"):
+            source = sources.get(source_level)
+            warnings = source.get("warnings") if isinstance(source, Mapping) else None
+            if not isinstance(warnings, list):
+                continue
+            for warning in warnings:
+                if isinstance(warning, Mapping) and isinstance(
+                    hazard_id := warning.get("hazard_id"), str
+                ):
+                    indexed.setdefault(hazard_id, {})[source_level] = dict(warning)
+        return indexed
+
+    def _publish_household_warning_contract(
+        self, contract: dict[str, Any], now: datetime
+    ) -> None:
+        """Attach stable recent-change times before atomically publishing a snapshot."""
+        previous = self._warning_sources_by_hazard(self._household_warning_contract)
+        current = self._warning_sources_by_hazard(contract)
+        provider_changes = contract.get("recent_changes", {})
+        for hazard_id in previous.keys() | current.keys():
+            if previous.get(hazard_id) == current.get(hazard_id):
+                continue
+            provider_time = (
+                provider_changes.get(hazard_id)
+                if isinstance(provider_changes, Mapping)
+                else None
+            )
+            self._recent_warning_changes[hazard_id] = (
+                self._parse_provider_time(provider_time) or now
+                if hazard_id in current
+                else now
+            )
+        retention_cutoff = now - timedelta(hours=24)
+        for hazard_id, changed_at in tuple(self._recent_warning_changes.items()):
+            if hazard_id not in current and changed_at < retention_cutoff:
+                del self._recent_warning_changes[hazard_id]
+        contract["recent_changes"] = {
+            hazard_id: changed_at.isoformat()
+            for hazard_id, changed_at in sorted(self._recent_warning_changes.items())
+        }
+        self._household_warning_contract = contract
 
     def _refresh_household_warning_contract(
         self, response: Mapping[str, Any], now: datetime
@@ -275,12 +330,13 @@ class QWeatherUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             city_alerts, district_alerts = split_household_alerts(
                 response.get("alerts"), self.warning_jurisdiction
             )
-            self._household_warning_contract = build_household_warning_contract(
+            contract = build_household_warning_contract(
                 self.warning_jurisdiction,
                 city_alerts=city_alerts,
                 district_alerts=district_alerts,
                 now=now,
             )
+            self._publish_household_warning_contract(contract, now)
         except WarningContractError:
             self._last_update_results["warning"] = "contract_error"
             self._set_household_warning_failure("contract_error", now)
@@ -342,6 +398,8 @@ class QWeatherUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     self._store_warning_response(response, refresh_time)
                     if self._last_update_results["warning"] == "success":
                         self._refresh_household_warning_contract(response, refresh_time)
+                    elif self._last_update_results["warning"] in {"unchanged", "stale"}:
+                        self._set_household_warning_failure("stale", refresh_time)
                     else:
                         self._set_household_warning_failure("failed", refresh_time)
                     continue

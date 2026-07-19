@@ -28,6 +28,7 @@ from .const import (
     CONF_KEY_ID,
     CONF_PRIVATE_KEY,
     CONF_WARNING_LOCATION_QUERY,
+    CONF_WARNING_LOCATION_COORDINATES,
     CONF_GIRD,
     CONF_CUSTOM_UI,
     DEFAULT_UPDATE_INTERVAL,
@@ -37,6 +38,7 @@ from .const import (
 from .location import (
     QuantizedLocationMismatch,
     async_quantize_and_verify_location,
+    async_quantize_and_verify_warning_jurisdiction,
     city_candidate_for_district,
     is_district_location_candidate,
     quantize_coordinates,
@@ -110,6 +112,8 @@ class QWeatherConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     """处理和风天气的配置流."""
 
     VERSION = 1
+    _RECONFIGURE_WARNING = "warning_jurisdiction"
+    _RECONFIGURE_CONNECTION = "weather_connection"
 
     def __init__(self) -> None:
         """初始化临时变量."""
@@ -368,7 +372,7 @@ class QWeatherConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
         # 确定出错时应该回退到哪个步骤
         if self.source == config_entries.SOURCE_RECONFIGURE:
-            step_id = "reconfigure"
+            step_id = "reconfigure_connection"
         elif "reuse_from" in self._temp_data:
             step_id = "reuse_location"
         else:
@@ -494,7 +498,13 @@ class QWeatherConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 response = await api.city_lookup(city_query, lang=language)
                 candidates = response.get("location") if response.get("code") == "200" else []
                 city = city_candidate_for_district(candidates, district)
+                coordinates = await async_quantize_and_verify_warning_jurisdiction(
+                    api,
+                    district,
+                    language=language,
+                )
                 jurisdiction_data = warning_jurisdiction_config(district, city)
+                jurisdiction_data[CONF_WARNING_LOCATION_COORDINATES] = coordinates
             except (QuantizedLocationMismatch, ValueError, TypeError):
                 return self.async_abort(reason="warning_location_not_found")
             return self.async_update_reload_and_abort(
@@ -615,23 +625,81 @@ class QWeatherConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             }
         )
 
+    @classmethod
+    def _reconfigure_target_schema(cls) -> vol.Schema:
+        return vol.Schema(
+            {
+                vol.Required("reconfigure_target", default=cls._RECONFIGURE_WARNING): (
+                    selector.SelectSelector(
+                        selector.SelectSelectorConfig(
+                            options=[
+                                {
+                                    "value": cls._RECONFIGURE_WARNING,
+                                    "label": "Warning jurisdiction",
+                                },
+                                {
+                                    "value": cls._RECONFIGURE_CONNECTION,
+                                    "label": "Weather connection",
+                                },
+                            ],
+                            mode=selector.SelectSelectorMode.LIST,
+                        )
+                    )
+                )
+            }
+        )
+
+    async def async_step_reconfigure_connection(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        """Preserve credential and weather-location reconfiguration for old entries."""
+        entry = self._get_reconfigure_entry()
+        if user_input is not None:
+            self._temp_data = first_version_reconfigure_data(entry.data, user_input)
+            return await self.async_step_jwt_setup()
+        return self.async_show_form(
+            step_id="reconfigure_connection",
+            data_schema=vol.Schema(
+                {
+                    vol.Required(CONF_HOST, default=entry.data.get(CONF_HOST, "")):
+                    selector.TextSelector(),
+                    vol.Required(
+                        CONF_LOCATION_ID,
+                        default=entry.data.get(CONF_LOCATION_ID, ""),
+                    ): selector.TextSelector(),
+                }
+            ),
+        )
+
     async def async_step_reconfigure(
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
-        """Reconfigure only the independent district-level warning jurisdiction."""
+        """Choose whether to reconfigure warning jurisdiction or connection data."""
         if user_input is not None:
+            # Accept a query here as well so a form resubmission never loses the
+            # warning-location path while showing its validation error.
             query = user_input.get(CONF_WARNING_LOCATION_QUERY)
-            if not isinstance(query, str) or not query.strip():
+            if isinstance(query, str):
+                if not query.strip():
+                    return self.async_show_form(
+                        step_id="reconfigure",
+                        data_schema=self._warning_location_query_schema(),
+                        errors={CONF_WARNING_LOCATION_QUERY: "required"},
+                    )
+                return await self._async_search_warning_location(query)
+            target = user_input.get("reconfigure_target")
+            if target == self._RECONFIGURE_WARNING:
                 return self.async_show_form(
                     step_id="reconfigure",
                     data_schema=self._warning_location_query_schema(),
-                    errors={CONF_WARNING_LOCATION_QUERY: "required"},
                 )
-            return await self._async_search_warning_location(query)
+            if target == self._RECONFIGURE_CONNECTION:
+                return await self.async_step_reconfigure_connection()
 
         return self.async_show_form(
             step_id="reconfigure",
-            data_schema=self._warning_location_query_schema(),
+            data_schema=self._reconfigure_target_schema(),
+            errors={"reconfigure_target": "required"} if user_input is not None else None,
         )
 
 

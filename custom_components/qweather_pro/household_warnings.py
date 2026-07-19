@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime
 import re
-from typing import Any, Mapping
+from typing import Any, Literal, Mapping
 
 
 _LEVELS = {"blue": 1, "yellow": 2, "orange": 3, "red": 4}
@@ -44,7 +44,10 @@ _CLEAR_STATUSES = {
     "终止",
 }
 _CLEAR_TITLE = re.compile(r"(?:解除|取消|撤销|终止)")
-_SCOPE_ALIASES = {
+WarningSourceLevel = Literal["city", "district"]
+WarningScope = Literal["city", "district", "other"]
+
+_SCOPE_ALIASES: dict[str, WarningScope] = {
     "municipal": "city",
     "city": "city",
     "district": "district",
@@ -73,7 +76,7 @@ class WarningJurisdiction:
     def label(self) -> str:
         return " · ".join((self.district_name, self.city_name, self.country))
 
-    def label_for_source(self, source_level: str) -> str:
+    def label_for_source(self, source_level: WarningSourceLevel) -> str:
         """Return the configured administrative label for one provider source."""
         if source_level == "city":
             return " · ".join((self.city_name, self.country))
@@ -86,7 +89,7 @@ class WarningJurisdiction:
 class _WarningEvent:
     """One latest provider event for a source-level and hazard pair."""
 
-    source_level: str
+    source_level: WarningSourceLevel
     hazard_id: str
     hazard_name: str
     issued_at: datetime
@@ -169,7 +172,7 @@ def _is_clear(record: Mapping[str, Any], title: str) -> bool:
 def _normalize_event(
     record: Mapping[str, Any],
     *,
-    source_level: str,
+    source_level: WarningSourceLevel,
     jurisdiction: WarningJurisdiction,
     now: datetime,
 ) -> _WarningEvent:
@@ -214,7 +217,7 @@ def _normalize_event(
 def _current_source_warnings(
     alerts: object,
     *,
-    source_level: str,
+    source_level: WarningSourceLevel,
     jurisdiction: WarningJurisdiction,
     now: datetime,
 ) -> dict[str, dict[str, str]]:
@@ -272,7 +275,7 @@ def _same_place(left: str | None, right: str) -> bool:
     return left is not None and left.casefold() == right.casefold()
 
 
-def _published_scope(record: Mapping[str, Any]) -> str | None:
+def _published_scope(record: Mapping[str, Any]) -> WarningScope | None:
     scope = _optional_text(record.get("scope") or record.get("administrativeLevel"))
     if scope is None:
         location = _location_mapping(record)
@@ -287,7 +290,7 @@ def _published_scope(record: Mapping[str, Any]) -> str | None:
 
 def _identified_scope(
     record: Mapping[str, Any], jurisdiction: WarningJurisdiction
-) -> str | None:
+) -> WarningScope | None:
     """Identify an alert's target using structured provider location fields."""
     location = _location_mapping(record)
     location_id = _location_text(record, location, "locationId", "areaId", "id")
@@ -322,7 +325,9 @@ def _identified_scope(
     return None
 
 
-def _scope_for_record(record: Mapping[str, Any], jurisdiction: WarningJurisdiction) -> str:
+def _scope_for_record(
+    record: Mapping[str, Any], jurisdiction: WarningJurisdiction
+) -> WarningScope:
     """Classify a provider alert without using title or sender-name guesses."""
     declared_scope = _published_scope(record)
     identified_scope = _identified_scope(record, jurisdiction)
@@ -330,15 +335,11 @@ def _scope_for_record(record: Mapping[str, Any], jurisdiction: WarningJurisdicti
         return "other"
     if declared_scope is None and identified_scope is None:
         raise WarningContractError("Warning record has no reliable jurisdiction")
-    if declared_scope is not None and identified_scope is not None:
-        if declared_scope != identified_scope:
-            raise WarningContractError("Warning record has conflicting jurisdiction")
-        return declared_scope
-    if declared_scope is not None:
-        return declared_scope
     if identified_scope is not None:
+        if declared_scope is not None and declared_scope != identified_scope:
+            raise WarningContractError("Warning record has conflicting jurisdiction")
         return identified_scope
-    raise AssertionError("A warning scope must be declared or identified")
+    raise WarningContractError("Warning record has no reliable jurisdiction")
 
 
 def split_household_alerts(
@@ -374,6 +375,14 @@ def _source_snapshot(warnings: dict[str, dict[str, str]]) -> dict[str, object]:
     }
 
 
+def _latest_issued(warnings: list[dict[str, str]]) -> str:
+    """Return the chronologically latest already-validated provider issue time."""
+    return max(
+        warnings,
+        key=lambda warning: datetime.fromisoformat(warning["issued"].replace("Z", "+00:00")),
+    )["issued"]
+
+
 def build_household_warning_contract(
     jurisdiction: WarningJurisdiction,
     *,
@@ -406,7 +415,7 @@ def build_household_warning_contract(
         for hazard_id in sorted(source_by_hazard)
     ]
     recent_changes = {
-        hazard_id: max(warning["issued"] for warning in warnings)
+        hazard_id: _latest_issued(warnings)
         for hazard_id, warnings in source_by_hazard.items()
     }
     return {

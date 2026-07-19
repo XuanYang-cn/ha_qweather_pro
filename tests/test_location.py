@@ -5,6 +5,7 @@ import pytest
 from custom_components.qweather_pro.location import (
     QuantizedLocationMismatch,
     async_quantize_and_verify_location,
+    async_quantize_and_verify_warning_jurisdiction,
     city_candidate_for_district,
     is_district_location_candidate,
     quantize_coordinates,
@@ -95,6 +96,36 @@ async def test_quantized_point_fails_closed_outside_the_original_jurisdiction() 
         await async_quantize_and_verify_location(
             client,
             SYNTHETIC_SHANGHAI,
+            language="zh",
+        )
+
+
+async def test_warning_district_quantization_requires_the_same_district_id() -> None:
+    district = {
+        "id": "synthetic-district",
+        "name": "Synthetic District",
+        "adm1": "Synthetic Province",
+        "adm2": "Synthetic City",
+        "country": "Synthetic Country",
+        "lon": "120.004",
+        "lat": "30.004",
+    }
+    verified = {**district, "lon": "120.00", "lat": "30.00"}
+    client = FakeLookupClient([verified])
+
+    coordinates = await async_quantize_and_verify_warning_jurisdiction(
+        client,
+        district,
+        language="zh",
+    )
+
+    assert coordinates == "120.00,30.00"
+    assert client.calls == [("120.00,30.00", "zh")]
+
+    with pytest.raises(QuantizedLocationMismatch):
+        await async_quantize_and_verify_warning_jurisdiction(
+            FakeLookupClient([{**verified, "id": "other-district"}]),
+            district,
             language="zh",
         )
 

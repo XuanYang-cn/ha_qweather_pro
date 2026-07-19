@@ -80,6 +80,21 @@ def _warning(
     expire_time: str = "2026-07-14T09:00+08:00",
 ) -> dict[str, object]:
     """Create a synthetic active Shanghai QWeather warning response item."""
+    location = (
+        {
+            "id": "synthetic-city",
+            "name": "Synthetic City",
+            "country": "Synthetic Country",
+        }
+        if scope == "city"
+        else {
+            "id": "synthetic-district",
+            "name": "Synthetic District",
+            "cityId": "synthetic-city",
+            "cityName": "Synthetic City",
+            "country": "Synthetic Country",
+        }
+    )
     return {
         "id": warning_id,
         "eventType": {"id": hazard_code, "name": hazard_name},
@@ -93,6 +108,7 @@ def _warning(
         "expireTime": expire_time,
         "status": status,
         "scope": scope,
+        "location": location,
     }
 
 
@@ -1074,6 +1090,70 @@ async def test_successful_warning_snapshot_replaces_disappeared_hazards(
         "state": "clear",
         "warnings": [],
     }
+
+
+async def test_unchanged_success_is_stale_not_a_request_failure(
+    hass,
+    monkeypatch,
+) -> None:
+    """An unadvanced provider timestamp remains distinct from a failed request."""
+    qweather = FakeQWeatherClient()
+    qweather.responses["warning"] = {
+        "metadata": {"updateTime": "2026-07-14T08:00+08:00"},
+        "alerts": [_warning("rain-1", expire_time="2026-07-14T12:00+08:00")],
+    }
+    _patch_provider_clients(
+        monkeypatch,
+        ProviderClients(
+            qweather=qweather,
+            nationwide_warnings=FakeNationwideWarningClient({}),
+        ),
+    )
+    entry = _config_entry()
+    assert await integration.async_setup_entry(hass, entry)
+    coordinator = entry.runtime_data
+    initial_success = coordinator.data["dataset_status"]["warning"]["last_success_time"]
+    clock = MutableClock(datetime.fromisoformat(initial_success))
+    monkeypatch.setattr(coordinator, "_now", clock.now)
+    clock.advance(timedelta(minutes=30))
+
+    await coordinator.async_refresh()
+
+    assert coordinator.data["household_warning"]["state"] == "stale"
+    assert coordinator.data["dataset_status"]["warning"]["last_update_result"] == "unchanged"
+    assert coordinator.data["dataset_status"]["warning"]["state"] == "stale"
+
+
+async def test_successful_disappearance_records_the_hazard_change_time(
+    hass,
+    monkeypatch,
+) -> None:
+    """A successful empty snapshot keeps the just-cleared hazard's change time."""
+    qweather = FakeQWeatherClient()
+    qweather.responses["warning"]["alerts"] = [
+        _warning("rain-1", expire_time="2026-07-14T12:00+08:00")
+    ]
+    _patch_provider_clients(
+        monkeypatch,
+        ProviderClients(
+            qweather=qweather,
+            nationwide_warnings=FakeNationwideWarningClient({}),
+        ),
+    )
+    entry = _config_entry()
+    assert await integration.async_setup_entry(hass, entry)
+    coordinator = entry.runtime_data
+    initial_success = coordinator.data["dataset_status"]["warning"]["last_success_time"]
+    clock = MutableClock(datetime.fromisoformat(initial_success))
+    monkeypatch.setattr(coordinator, "_now", clock.now)
+    qweather.responses["warning"] = {"code": "200", "alerts": []}
+    clock.advance(timedelta(minutes=30))
+
+    await coordinator.async_refresh()
+
+    contract = coordinator.data["household_warning"]
+    assert contract["state"] == "clear"
+    assert contract["recent_changes"] == {"rain": clock.now().isoformat()}
 
 
 async def test_warning_sensor_marks_initial_failure_as_unconfirmed(

@@ -68,6 +68,10 @@ def _normalized_place_name(value: Any) -> str:
     return str(value or "").strip().casefold()
 
 
+def _same_location_value(value: Any, expected: str) -> bool:
+    return _normalized_place_name(value) == _normalized_place_name(expected)
+
+
 def _required_location_value(location: Mapping[str, Any], field: str) -> str:
     value = location.get(field)
     if isinstance(value, str) and value.strip():
@@ -231,6 +235,37 @@ async def async_quantize_and_verify_location(
             and is_expected_shanghai_jurisdiction(candidate)
             for candidate in candidates
         )
+    ):
+        raise QuantizedLocationMismatch(
+            "Quantized location does not match the selected warning jurisdiction"
+        )
+    return coordinates
+
+
+async def async_quantize_and_verify_warning_jurisdiction(
+    client: LocationLookupClient,
+    district: Mapping[str, Any],
+    *,
+    language: str,
+) -> str:
+    """Quantize a selected district point and prove it remains in that district."""
+    coordinates = quantize_coordinates(
+        _required_location_value(district, "lon"),
+        _required_location_value(district, "lat"),
+    )
+    response = await client.city_lookup(coordinates, lang=language)
+    candidates = response.get("location", []) if response.get("code") == "200" else []
+    district_id = _required_location_value(district, "id")
+    country = _required_location_value(district, "country")
+    province = _required_location_value(district, "adm1")
+    city = _required_location_value(district, "adm2")
+    if not any(
+        _same_location_value(candidate.get("id"), district_id)
+        and _same_location_value(candidate.get("country"), country)
+        and _same_location_value(candidate.get("adm1"), province)
+        and _same_location_value(candidate.get("adm2"), city)
+        for candidate in candidates
+        if isinstance(candidate, Mapping)
     ):
         raise QuantizedLocationMismatch(
             "Quantized location does not match the selected warning jurisdiction"

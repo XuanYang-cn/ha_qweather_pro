@@ -179,6 +179,7 @@ async def test_reconfigure_searches_a_district_then_saves_only_warning_jurisdict
         [
             {"code": "200", "location": [city, district]},
             {"code": "200", "location": [city]},
+            {"code": "200", "location": [district]},
         ]
     )
     entry = SimpleNamespace(data={CONF_LOCATION_ID: "120.55,30.55"})
@@ -209,7 +210,11 @@ async def test_reconfigure_searches_a_district_then_saves_only_warning_jurisdict
 
     assert result == {"type": "abort", "reason": "reconfigure_successful"}
     assert captured["entry"] is entry
-    assert lookup.queries == ["Synthetic District", "Synthetic City"]
+    assert lookup.queries == [
+        "Synthetic District",
+        "Synthetic City",
+        "120.00,30.00",
+    ]
     data = captured["data"]
     assert data[CONF_LOCATION_ID] == "120.55,30.55"
     assert data[CONF_WARNING_LOCATION_ID] == "synthetic-district"
@@ -251,3 +256,43 @@ async def test_reconfigure_rejects_an_ambiguous_parent_city(hass, monkeypatch) -
     )
 
     assert result["reason"] == "warning_location_not_found"
+
+
+async def test_reconfigure_keeps_the_existing_weather_connection_path(
+    hass,
+    monkeypatch,
+) -> None:
+    entry = SimpleNamespace(
+        data={
+            CONF_HOST: "old-host.example.invalid",
+            CONF_LOCATION_ID: "120.00,30.00",
+            CONF_API_KEY: "legacy-key",
+        }
+    )
+    flow = _reconfigure_flow(hass, entry)
+    captured: dict[str, object] = {}
+
+    async def capture_jwt_setup():
+        captured["data"] = flow._temp_data
+        return {"type": "form", "step_id": "jwt_setup"}
+
+    monkeypatch.setattr(flow, "async_step_jwt_setup", capture_jwt_setup)
+
+    form = await flow.async_step_reconfigure(
+        {"reconfigure_target": "weather_connection"}
+    )
+    assert form["step_id"] == "reconfigure_connection"
+
+    result = await flow.async_step_reconfigure_connection(
+        {
+            CONF_HOST: "new-host.example.invalid",
+            CONF_LOCATION_ID: "120.50,30.50",
+        }
+    )
+
+    assert result == {"type": "form", "step_id": "jwt_setup"}
+    assert captured["data"] == {
+        CONF_HOST: "new-host.example.invalid",
+        CONF_LOCATION_ID: "120.50,30.50",
+        CONF_USE_TOKEN: True,
+    }

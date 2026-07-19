@@ -241,10 +241,14 @@ def test_split_rejects_unknown_or_conflicting_applicability_atomically() -> None
     unknown = _warning()
     unknown.pop("administrativeLevel")
     unknown.pop("location")
+    bare_scope = _warning()
+    bare_scope.pop("location")
     conflict = _warning(scope="city")
     conflict["location"] = _location("district")
 
     with pytest.raises(WarningContractError):
         split_household_alerts([unknown], JURISDICTION)
+    with pytest.raises(WarningContractError):
+        split_household_alerts([bare_scope], JURISDICTION)
     with pytest.raises(WarningContractError):
         split_household_alerts([conflict], JURISDICTION)
