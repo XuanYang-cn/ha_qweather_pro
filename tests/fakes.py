@@ -86,10 +86,27 @@ class FakeQWeatherClient:
         self.responses = deepcopy(responses or QWEATHER_RESPONSES)
         self.calls: list[str] = []
         self.location_calls: list[tuple[str, str]] = []
+        self.location_responses: dict[str, dict[str, Any]] = {
+            "synthetic-city": {
+                "code": "200",
+                "location": [
+                    {
+                        "id": "synthetic-city",
+                        "name": "Synthetic City",
+                        "country": "Synthetic Country",
+                        "adm1": "Synthetic Province",
+                        "adm2": "Synthetic City",
+                        "lon": "120.00",
+                        "lat": "30.00",
+                    }
+                ],
+            }
+        }
         self.weather_now_calls: list[tuple[str, str, str]] = []
         self.forecast_calls: list[str] = []
         self.hourly_calls: list[str] = []
         self.warning_calls: list[tuple[str, str, str]] = []
+        self.warning_responses: dict[tuple[str, str], dict[str, Any]] = {}
 
     async def _response(self, name: str) -> dict[str, Any]:
         self.calls.append(name)
@@ -105,7 +122,10 @@ class FakeQWeatherClient:
     async def city_lookup(self, location: str, lang: str) -> dict[str, Any]:
         self.calls.append("location")
         self.location_calls.append((location, lang))
-        return deepcopy(self.responses["location"])
+        response = self.location_responses.get(location, self.responses["location"])
+        if isinstance(response, Exception):
+            raise response
+        return deepcopy(response)
 
     async def get_forecast(self, _lat: str, _lon: str, days: str, _lang: str) -> dict[str, Any]:
         self.forecast_calls.append(days)
@@ -117,7 +137,11 @@ class FakeQWeatherClient:
 
     async def get_warning_v1(self, lat: str, lon: str, lang: str) -> dict[str, Any]:
         self.warning_calls.append((lat, lon, lang))
-        return await self._response("warning")
+        self.calls.append("warning")
+        response = self.warning_responses.get((lat, lon), self.responses["warning"])
+        if isinstance(response, Exception):
+            raise response
+        return deepcopy(response)
 
     async def get_air_v1(self, *_args: Any) -> dict[str, Any]:
         return await self._response("air")

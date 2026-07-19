@@ -214,6 +214,31 @@ def warning_jurisdiction_from_config(
     )
 
 
+def warning_city_coordinates(
+    response: Mapping[str, Any], jurisdiction: WarningJurisdiction
+) -> tuple[str, str]:
+    """Return the configured parent city's provider coordinate without persisting it."""
+    candidates = response.get("location") if response.get("code") == "200" else []
+    if not isinstance(candidates, list):
+        raise QuantizedLocationMismatch("Provider warning city lookup failed")
+    matches = [
+        candidate
+        for candidate in candidates
+        if isinstance(candidate, Mapping)
+        and _same_location_value(candidate.get("id"), jurisdiction.city_id)
+        and _same_location_value(candidate.get("name"), jurisdiction.city_name)
+        and _same_location_value(candidate.get("country"), jurisdiction.country)
+    ]
+    if len(matches) != 1:
+        raise QuantizedLocationMismatch(
+            "Provider did not return one configured warning city"
+        )
+    return (
+        _required_location_value(matches[0], "lon"),
+        _required_location_value(matches[0], "lat"),
+    )
+
+
 async def async_quantize_and_verify_location(
     client: LocationLookupClient,
     selected_location: dict[str, Any],

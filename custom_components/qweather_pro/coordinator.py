@@ -23,14 +23,16 @@ from .const import (
 )
 from .condition import CONDITION_MAP
 from .location import (
+    QuantizedLocationMismatch,
     quantize_location_input,
     verified_shanghai_location,
+    warning_city_coordinates,
     warning_jurisdiction_from_config,
 )
 from .household_warnings import (
     WarningContractError,
+    alerts_for_configured_source,
     build_household_warning_contract,
-    split_household_alerts,
 )
 from .rain_guidance import daily_rain_guidance
 
@@ -215,14 +217,25 @@ class QWeatherUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         except (TypeError, ValueError):
             return None
 
-    def _store_warning_response(
+    def _store_household_warning_responses(
         self,
-        response: Mapping[str, Any],
+        city_response: Mapping[str, Any],
+        district_response: Mapping[str, Any],
         refresh_time: datetime,
     ) -> None:
-        """Accept a usable warning response without conflating it with source age."""
-        provider_time = self._provider_time_from_response("warning", response)
-        provider_timestamp = self._parse_provider_time(provider_time)
+        """Store two source snapshots only when they form one coherent batch."""
+        city_time = self._provider_time_from_response("warning", city_response)
+        district_time = self._provider_time_from_response("warning", district_response)
+        city_timestamp = self._parse_provider_time(city_time)
+        district_timestamp = self._parse_provider_time(district_time)
+        if (
+            city_timestamp is not None
+            and district_timestamp is not None
+            and city_timestamp != district_timestamp
+        ):
+            raise WarningContractError("Warning source snapshots have different times")
+        provider_time = city_time or district_time
+        provider_timestamp = city_timestamp or district_timestamp
         previous_provider_timestamp = self._latest_provider_times.get("warning")
         if (
             provider_timestamp is not None
@@ -237,12 +250,19 @@ class QWeatherUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             refresh_time,
         ):
             if self._cache_data["warning"] is None:
-                self._cache_data["warning"] = dict(response)
+                self._cache_data["warning"] = {
+                    "metadata": {"updateTime": provider_time},
+                    "city_alerts": city_response["alerts"],
+                    "district_alerts": district_response["alerts"],
+                }
             self._last_update_results["warning"] = "stale"
             return
 
-        snapshot = dict(response)
-        self._cache_data["warning"] = snapshot
+        self._cache_data["warning"] = {
+            "metadata": {"updateTime": provider_time} if provider_time else {},
+            "city_alerts": city_response["alerts"],
+            "district_alerts": district_response["alerts"],
+        }
         self._last_success_times["warning"] = refresh_time
         self._last_update_results["warning"] = "success"
         if provider_timestamp is not None:
@@ -320,15 +340,25 @@ class QWeatherUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._household_warning_contract = contract
 
     def _refresh_household_warning_contract(
-        self, response: Mapping[str, Any], now: datetime
+        self,
+        city_response: Mapping[str, Any],
+        district_response: Mapping[str, Any],
+        now: datetime,
     ) -> None:
         """Publish the provider batch only after every applicable record normalizes."""
         if self.warning_jurisdiction is None:
             self._set_household_warning_failure("uninitialized", now)
             return
         try:
-            city_alerts, district_alerts = split_household_alerts(
-                response.get("alerts"), self.warning_jurisdiction
+            city_alerts = alerts_for_configured_source(
+                city_response["alerts"],
+                self.warning_jurisdiction,
+                "city",
+            )
+            district_alerts = alerts_for_configured_source(
+                district_response["alerts"],
+                self.warning_jurisdiction,
+                "district",
             )
             contract = build_household_warning_contract(
                 self.warning_jurisdiction,
@@ -340,6 +370,68 @@ class QWeatherUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         except WarningContractError:
             self._last_update_results["warning"] = "contract_error"
             self._set_household_warning_failure("contract_error", now)
+
+    async def _async_refresh_household_warnings(
+        self, language: str, refresh_time: datetime
+    ) -> None:
+        """Refresh city and district alerts as one explicitly scoped provider batch."""
+        assert self.warning_jurisdiction is not None
+        self._last_attempt_times["warning"] = refresh_time
+        try:
+            city_lookup = await self.api.city_lookup(
+                self.warning_jurisdiction.city_id,
+                lang=language,
+            )
+            city_lon, city_lat = warning_city_coordinates(
+                city_lookup,
+                self.warning_jurisdiction,
+            )
+            city_response, district_response = await asyncio.gather(
+                self.api.get_warning_v1(city_lat, city_lon, language),
+                self.api.get_warning_v1(
+                    self.warning_jurisdiction.latitude,
+                    self.warning_jurisdiction.longitude,
+                    language,
+                ),
+            )
+        except QuantizedLocationMismatch:
+            self._last_update_results["warning"] = "contract_error"
+            self._set_household_warning_failure("contract_error", refresh_time)
+            return
+        except Exception as error:
+            self._last_update_results["warning"] = "failed"
+            self._set_household_warning_failure("failed", refresh_time)
+            LOGGER.debug(
+                "QWeather local warning refresh failed (%s)", type(error).__name__
+            )
+            return
+
+        if not all(
+            self._response_succeeded("warning", response)
+            for response in (city_response, district_response)
+        ):
+            self._last_update_results["warning"] = "failed"
+            self._set_household_warning_failure("failed", refresh_time)
+            return
+        try:
+            self._store_household_warning_responses(
+                city_response,
+                district_response,
+                refresh_time,
+            )
+            if self._last_update_results["warning"] == "success":
+                self._refresh_household_warning_contract(
+                    city_response,
+                    district_response,
+                    refresh_time,
+                )
+            elif self._last_update_results["warning"] in {"unchanged", "stale"}:
+                self._set_household_warning_failure("stale", refresh_time)
+            else:
+                self._set_household_warning_failure("failed", refresh_time)
+        except WarningContractError:
+            self._last_update_results["warning"] = "contract_error"
+            self._set_household_warning_failure("contract_error", refresh_time)
 
     async def _async_update_data(self) -> dict[str, Any]:
         """Refresh independent provider datasets without hiding failed snapshots."""
@@ -376,15 +468,12 @@ class QWeatherUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             tasks["daily"] = self.api.get_forecast(lat, lon, "7d", qweather_lang)
         if self._should_update("hourly", refresh_time):
             tasks["hourly"] = self.api.get_hourly(lat, lon, "24h", qweather_lang)
+        refresh_household_warnings = False
         if self.warning_jurisdiction is None:
             self._last_update_results["warning"] = "uninitialized"
             self._set_household_warning_failure("uninitialized", refresh_time)
         elif self._should_update("warning", refresh_time):
-            tasks["warning"] = self.api.get_warning_v1(
-                self.warning_jurisdiction.latitude,
-                self.warning_jurisdiction.longitude,
-                qweather_lang,
-            )
+            refresh_household_warnings = True
         if self._should_update("air", refresh_time):
             tasks["air"] = self.api.get_air_v1(lat, lon, qweather_lang)
         if self._should_update("indices", refresh_time):
@@ -394,15 +483,6 @@ class QWeatherUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         for category, response in zip(tasks, results, strict=True):
             self._last_attempt_times[category] = refresh_time
             if self._response_succeeded(category, response):
-                if category == "warning":
-                    self._store_warning_response(response, refresh_time)
-                    if self._last_update_results["warning"] == "success":
-                        self._refresh_household_warning_contract(response, refresh_time)
-                    elif self._last_update_results["warning"] in {"unchanged", "stale"}:
-                        self._set_household_warning_failure("stale", refresh_time)
-                    else:
-                        self._set_household_warning_failure("failed", refresh_time)
-                    continue
                 provider_time = self._provider_time_from_response(category, response)
                 provider_timestamp = self._parse_provider_time(provider_time)
                 previous_provider_timestamp = self._latest_provider_times.get(category)
@@ -434,13 +514,14 @@ class QWeatherUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                         self._latest_provider_times[category] = provider_timestamp
             else:
                 self._last_update_results[category] = "failed"
-                if category == "warning":
-                    self._set_household_warning_failure("failed", refresh_time)
                 LOGGER.debug(
                     "QWeather endpoint %s refresh failed (%s)",
                     category,
                     self._response_failure_type(response),
                 )
+
+        if refresh_household_warnings:
+            await self._async_refresh_household_warnings(qweather_lang, refresh_time)
 
         if not any(self._cache_data[category] is not None for category in CORE_DATASETS):
             raise UpdateFailed("No core QWeather data snapshots are available")

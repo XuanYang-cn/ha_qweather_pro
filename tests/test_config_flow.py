@@ -258,6 +258,40 @@ async def test_reconfigure_rejects_an_ambiguous_parent_city(hass, monkeypatch) -
     assert result["reason"] == "warning_location_not_found"
 
 
+async def test_reconfigure_candidate_cancellation_leaves_entry_data_unchanged(
+    hass,
+    monkeypatch,
+) -> None:
+    entry = SimpleNamespace(data={CONF_LOCATION_ID: "120.55,30.55"})
+    flow = _reconfigure_flow(hass, entry)
+    flow._warning_location_candidates = [
+        {
+            "id": "synthetic-district",
+            "name": "Synthetic District",
+            "adm1": "Synthetic Province",
+            "adm2": "Synthetic City",
+            "country": "Synthetic Country",
+            "lon": "120.00",
+            "lat": "30.00",
+        }
+    ]
+    original_data = dict(entry.data)
+    update_called = False
+
+    def capture_update(*_args, **_kwargs):
+        nonlocal update_called
+        update_called = True
+        return {"type": "abort"}
+
+    monkeypatch.setattr(flow, "async_update_reload_and_abort", capture_update)
+
+    result = await flow.async_step_select_warning_location()
+
+    assert result["step_id"] == "select_warning_location"
+    assert entry.data == original_data
+    assert not update_called
+
+
 async def test_reconfigure_keeps_the_existing_weather_connection_path(
     hass,
     monkeypatch,

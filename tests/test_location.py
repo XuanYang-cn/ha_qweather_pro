@@ -10,6 +10,7 @@ from custom_components.qweather_pro.location import (
     is_district_location_candidate,
     quantize_coordinates,
     quantize_location_input,
+    warning_city_coordinates,
     warning_jurisdiction_from_config,
     warning_jurisdiction_config,
 )
@@ -224,3 +225,36 @@ def test_warning_jurisdiction_requires_a_complete_private_config_entry_value() -
     assert warning_jurisdiction_from_config({}) is None
     with pytest.raises(QuantizedLocationMismatch):
         warning_jurisdiction_from_config({**config, "warning_city_id": ""})
+
+
+def test_warning_city_coordinates_requires_the_configured_parent_city() -> None:
+    jurisdiction = warning_jurisdiction_from_config(
+        {
+            "warning_location_id": "synthetic-district",
+            "warning_location_name": "Synthetic District",
+            "warning_city_id": "synthetic-city",
+            "warning_city_name": "Synthetic City",
+            "warning_country": "Synthetic Country",
+            "warning_location_coordinates": "120.00,30.00",
+        }
+    )
+    assert jurisdiction is not None
+    response = {
+        "code": "200",
+        "location": [
+            {
+                "id": "synthetic-city",
+                "name": "Synthetic City",
+                "country": "Synthetic Country",
+                "lon": "120.00",
+                "lat": "30.00",
+            }
+        ],
+    }
+
+    assert warning_city_coordinates(response, jurisdiction) == ("120.00", "30.00")
+    with pytest.raises(QuantizedLocationMismatch):
+        warning_city_coordinates(
+            {"code": "200", "location": [{**response["location"][0], "id": "other"}]},
+            jurisdiction,
+        )

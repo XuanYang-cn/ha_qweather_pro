@@ -133,7 +133,7 @@ def _event_type(record: Mapping[str, Any]) -> tuple[str, str]:
     else:
         code = None
         name = None
-    code = code or _first_text(record, "eventCode", "typeCode", "type_id")
+    code = code or _first_text(record, "eventCode", "typeCode", "type_id", "type")
     name = name or _first_text(record, "typeName", "type")
     if name is None:
         raise WarningContractError("Warning record has no reliable hazard name")
@@ -365,6 +365,37 @@ def split_household_alerts(
         elif scope == "district":
             district.append(record)
     return city, district
+
+
+def alerts_for_configured_source(
+    alerts: object,
+    jurisdiction: WarningJurisdiction,
+    expected_source: WarningSourceLevel,
+) -> list[Mapping[str, Any]]:
+    """Validate optional record jurisdiction against an explicitly scoped request.
+
+    A city or district endpoint establishes the source for untagged provider
+    records. If a record also declares a target, it must agree with that
+    endpoint; explicitly foreign districts stay excluded.
+    """
+    if not isinstance(alerts, list):
+        raise WarningContractError("Warning provider response has no alert list")
+    accepted: list[Mapping[str, Any]] = []
+    for record in alerts:
+        if not isinstance(record, Mapping):
+            raise WarningContractError("Warning provider response contains an invalid record")
+        declared_scope = _published_scope(record)
+        identified_scope = _identified_scope(record, jurisdiction)
+        if declared_scope is None and identified_scope is None:
+            accepted.append(record)
+            continue
+        scope = _scope_for_record(record, jurisdiction)
+        if scope == "other":
+            continue
+        if scope != expected_source:
+            raise WarningContractError("Warning record does not match its source request")
+        accepted.append(record)
+    return accepted
 
 
 def _source_snapshot(warnings: dict[str, dict[str, str]]) -> dict[str, object]:

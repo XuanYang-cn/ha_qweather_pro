@@ -7,6 +7,7 @@ import pytest
 from custom_components.qweather_pro.household_warnings import (
     WarningContractError,
     WarningJurisdiction,
+    alerts_for_configured_source,
     build_household_warning_contract,
     split_household_alerts,
 )
@@ -205,6 +206,23 @@ def test_title_level_is_a_controlled_fallback_when_structured_level_is_missing()
     assert contract["effective_warnings"][0]["level"] == "orange"
 
 
+def test_provider_type_is_used_as_a_stable_hazard_code_before_name_fallback() -> None:
+    warning = _warning()
+    warning.pop("eventType")
+    warning["type"] = "rain-event"
+    warning["typeName"] = "Localized rain name"
+
+    contract = build_household_warning_contract(
+        JURISDICTION,
+        city_alerts=[warning],
+        district_alerts=[],
+        now=NOW,
+    )
+
+    assert contract["effective_warnings"][0]["hazard_id"] == "rain-event"
+    assert contract["effective_warnings"][0]["hazard_name"] == "Localized rain name"
+
+
 @pytest.mark.parametrize(
     "warning",
     [
@@ -252,3 +270,23 @@ def test_split_rejects_unknown_or_conflicting_applicability_atomically() -> None
         split_household_alerts([bare_scope], JURISDICTION)
     with pytest.raises(WarningContractError):
         split_household_alerts([conflict], JURISDICTION)
+
+
+def test_source_boundary_accepts_untagged_records_and_excludes_explicitly_foreign_ones() -> None:
+    untagged = _warning()
+    untagged.pop("administrativeLevel")
+    untagged.pop("location")
+
+    city_alerts = alerts_for_configured_source(
+        [untagged, _warning(scope="other")],
+        JURISDICTION,
+        "city",
+    )
+
+    assert city_alerts == [untagged]
+    with pytest.raises(WarningContractError):
+        alerts_for_configured_source(
+            [_warning(scope="district")],
+            JURISDICTION,
+            "city",
+        )
