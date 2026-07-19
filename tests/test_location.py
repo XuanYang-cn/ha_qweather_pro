@@ -5,8 +5,12 @@ import pytest
 from custom_components.qweather_pro.location import (
     QuantizedLocationMismatch,
     async_quantize_and_verify_location,
+    city_candidate_for_district,
+    is_district_location_candidate,
     quantize_coordinates,
     quantize_location_input,
+    warning_jurisdiction_from_config,
+    warning_jurisdiction_config,
 )
 
 
@@ -93,3 +97,99 @@ async def test_quantized_point_fails_closed_outside_the_original_jurisdiction() 
             SYNTHETIC_SHANGHAI,
             language="zh",
         )
+
+
+def test_warning_jurisdiction_uses_only_selected_district_representative_data() -> None:
+    district = {
+        "id": "synthetic-district",
+        "name": "Synthetic District",
+        "adm1": "Synthetic Province",
+        "adm2": "Synthetic City",
+        "country": "Synthetic Country",
+        "lon": "120.004",
+        "lat": "30.004",
+    }
+    city = {
+        "id": "synthetic-city",
+        "name": "Synthetic City",
+        "adm1": "Synthetic Province",
+        "adm2": "Synthetic City",
+        "country": "Synthetic Country",
+        "lon": "120.00",
+        "lat": "30.00",
+    }
+
+    config = warning_jurisdiction_config(district, city)
+
+    assert config == {
+        "warning_location_id": "synthetic-district",
+        "warning_location_name": "Synthetic District",
+        "warning_city_id": "synthetic-city",
+        "warning_city_name": "Synthetic City",
+        "warning_country": "Synthetic Country",
+        "warning_location_coordinates": "120.00,30.00",
+    }
+
+
+def test_city_candidate_requires_one_structured_parent_city() -> None:
+    district = {
+        "id": "synthetic-district",
+        "name": "Synthetic District",
+        "adm1": "Synthetic Province",
+        "adm2": "Synthetic City",
+        "country": "Synthetic Country",
+        "lon": "120.00",
+        "lat": "30.00",
+    }
+    city = {
+        "id": "synthetic-city",
+        "name": "Synthetic City",
+        "adm1": "Synthetic Province",
+        "adm2": "Synthetic City",
+        "country": "Synthetic Country",
+        "lon": "120.00",
+        "lat": "30.00",
+    }
+
+    assert city_candidate_for_district([city], district) == city
+    with pytest.raises(QuantizedLocationMismatch):
+        city_candidate_for_district([], district)
+    with pytest.raises(QuantizedLocationMismatch):
+        city_candidate_for_district([city, city], district)
+
+
+def test_warning_location_search_hides_city_level_candidates() -> None:
+    district = {
+        "id": "synthetic-district",
+        "name": "Synthetic District",
+        "adm1": "Synthetic Province",
+        "adm2": "Synthetic City",
+        "country": "Synthetic Country",
+        "lon": "120.00",
+        "lat": "30.00",
+    }
+    city = {**district, "id": "synthetic-city", "name": "Synthetic City"}
+
+    assert is_district_location_candidate(district)
+    assert not is_district_location_candidate(city)
+    assert not is_district_location_candidate({"id": "incomplete"})
+
+
+def test_warning_jurisdiction_requires_a_complete_private_config_entry_value() -> None:
+    config = {
+        "warning_location_id": "synthetic-district",
+        "warning_location_name": "Synthetic District",
+        "warning_city_id": "synthetic-city",
+        "warning_city_name": "Synthetic City",
+        "warning_country": "Synthetic Country",
+        "warning_location_coordinates": "120.00,30.00",
+    }
+
+    jurisdiction = warning_jurisdiction_from_config(config)
+
+    assert jurisdiction is not None
+    assert jurisdiction.label == "Synthetic District · Synthetic City · Synthetic Country"
+    assert (jurisdiction.longitude, jurisdiction.latitude) == ("120.00", "30.00")
+    assert warning_jurisdiction_from_config({}) is None
+    with pytest.raises(QuantizedLocationMismatch):
+        warning_jurisdiction_from_config({**config, "warning_city_id": ""})

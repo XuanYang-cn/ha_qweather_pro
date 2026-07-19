@@ -86,8 +86,10 @@ class FakeQWeatherClient:
         self.responses = deepcopy(responses or QWEATHER_RESPONSES)
         self.calls: list[str] = []
         self.location_calls: list[tuple[str, str]] = []
+        self.weather_now_calls: list[tuple[str, str, str]] = []
         self.forecast_calls: list[str] = []
         self.hourly_calls: list[str] = []
+        self.warning_calls: list[tuple[str, str, str]] = []
 
     async def _response(self, name: str) -> dict[str, Any]:
         self.calls.append(name)
@@ -96,7 +98,8 @@ class FakeQWeatherClient:
             raise response
         return deepcopy(response)
 
-    async def get_weather_now(self, *_args: Any) -> dict[str, Any]:
+    async def get_weather_now(self, lat: str, lon: str, lang: str) -> dict[str, Any]:
+        self.weather_now_calls.append((lat, lon, lang))
         return await self._response("now")
 
     async def city_lookup(self, location: str, lang: str) -> dict[str, Any]:
@@ -112,7 +115,8 @@ class FakeQWeatherClient:
         self.hourly_calls.append(hours)
         return await self._response("hourly")
 
-    async def get_warning_v1(self, *_args: Any) -> dict[str, Any]:
+    async def get_warning_v1(self, lat: str, lon: str, lang: str) -> dict[str, Any]:
+        self.warning_calls.append((lat, lon, lang))
         return await self._response("warning")
 
     async def get_air_v1(self, *_args: Any) -> dict[str, Any]:

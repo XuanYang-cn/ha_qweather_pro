@@ -8,10 +8,12 @@ import pytest
 from homeassistant.const import CONF_HOST
 
 from custom_components.qweather_pro.api import QWeatherAPI, _log_retry_exhaustion
+import custom_components.qweather_pro.config_flow as config_flow
 from custom_components.qweather_pro.clients import (
     JWTConfigurationError,
     create_qweather_client,
 )
+from custom_components.qweather_pro.config_flow import QWeatherConfigFlow
 from custom_components.qweather_pro.const import CONF_USE_TOKEN
 
 
@@ -67,3 +69,35 @@ def test_retry_exhaustion_does_not_log_exception_details(caplog) -> None:
 
     assert private_host not in caplog.text
     assert "RuntimeError" in caplog.text
+
+
+async def test_warning_jurisdiction_reconfigure_does_not_log_the_search_text(
+    hass,
+    caplog,
+    monkeypatch,
+) -> None:
+    private_location = "Synthetic Private District"
+
+    class FailingLookup:
+        async def city_lookup(self, *_args, **_kwargs) -> dict:
+            raise RuntimeError(private_location)
+
+    flow = QWeatherConfigFlow()
+    flow.hass = hass
+    flow.handler = "qweather_pro"
+    flow.flow_id = "synthetic-privacy-flow"
+    flow.context = {"source": "reconfigure", "entry_id": "synthetic-entry"}
+    flow._get_reconfigure_entry = lambda: SimpleNamespace(data={})
+    monkeypatch.setattr(
+        config_flow,
+        "create_qweather_client",
+        lambda *_args: FailingLookup(),
+    )
+
+    with caplog.at_level(logging.ERROR):
+        result = await flow.async_step_reconfigure(
+            {"warning_location_query": private_location}
+        )
+
+    assert result["errors"] == {"base": "cannot_connect"}
+    assert private_location not in caplog.text

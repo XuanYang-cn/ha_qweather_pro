@@ -57,26 +57,21 @@ def _today_temperature_attributes(data: dict[str, Any]) -> dict[str, str | None]
 
 
 def _warning_sensor_value(data: dict[str, Any]) -> str | None:
-    """Distinguish a confirmed clear list from warnings that cannot be confirmed."""
-    warnings = data.get("warning", [])
-    status = data.get("dataset_status", {}).get("warning", {})
-    if status.get("last_update_result") != "success" and not warnings:
-        return "warning_unconfirmed"
-    if warnings:
-        return warnings[0].get("title")
-    return "without_warning"
+    """Expose the household contract's machine state without a title heuristic."""
+    contract = data.get("household_warning", {})
+    state = contract.get("state") if isinstance(contract, dict) else None
+    return state if isinstance(state, str) else "uninitialized"
 
 
 def _warning_attributes(data: dict[str, Any]) -> dict[str, Any]:
-    """Keep the legacy first-warning fields while publishing the complete list."""
-    warnings = data.get("warning", [])
+    """Publish only the one atomic household-effective warning contract."""
+    contract = data.get("household_warning", {})
+    warnings = contract.get("effective_warnings", []) if isinstance(contract, dict) else []
     status = data.get("dataset_status", {}).get("warning", {})
-    if not warnings:
-        return {"warnings": [], "warning_status": status}
     return {
-        **warnings[0],
         "warnings": warnings,
         "warning_status": status,
+        "warning_contract": contract,
     }
 
 

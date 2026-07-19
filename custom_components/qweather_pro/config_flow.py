@@ -27,6 +27,7 @@ from .const import (
     CONF_ACCOUNT_SELECT,
     CONF_KEY_ID,
     CONF_PRIVATE_KEY,
+    CONF_WARNING_LOCATION_QUERY,
     CONF_GIRD,
     CONF_CUSTOM_UI,
     DEFAULT_UPDATE_INTERVAL,
@@ -36,8 +37,11 @@ from .const import (
 from .location import (
     QuantizedLocationMismatch,
     async_quantize_and_verify_location,
+    city_candidate_for_district,
+    is_district_location_candidate,
     quantize_coordinates,
     quantize_location_input,
+    warning_jurisdiction_config,
 )
 
 
@@ -111,6 +115,7 @@ class QWeatherConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         """初始化临时变量."""
         self._temp_data: dict[str, Any] = {}
         self._discovered_locations: list[dict[str, Any]] = []
+        self._warning_location_candidates: list[dict[str, Any]] = []
         self._generated_private_key: str | None = None
         self._generated_public_key: str | None = None
 
@@ -412,6 +417,113 @@ class QWeatherConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             ),
         )
 
+    async def _async_search_warning_location(self, query: str) -> FlowResult:
+        """Find district candidates without altering the weather-data location."""
+        entry = self._get_reconfigure_entry()
+        api = create_qweather_client(self.hass, entry.data)
+        language = LANGUAGE_MAP.get(self.hass.config.language, "en")
+        try:
+            response = await api.city_lookup(query.strip(), lang=language)
+        except Exception as error:
+            LOGGER.error(
+                "Unable to search QWeather warning jurisdictions (%s)",
+                type(error).__name__,
+            )
+            return self.async_show_form(
+                step_id="reconfigure",
+                data_schema=self._warning_location_query_schema(query),
+                errors={"base": "cannot_connect"},
+            )
+        candidates = response.get("location") if response.get("code") == "200" else None
+        if not isinstance(candidates, list):
+            return self.async_show_form(
+                step_id="reconfigure",
+                data_schema=self._warning_location_query_schema(query),
+                errors={"base": "location_not_found"},
+            )
+        self._warning_location_candidates = [
+            candidate
+            for candidate in candidates
+            if isinstance(candidate, dict) and is_district_location_candidate(candidate)
+        ]
+        if not self._warning_location_candidates:
+            return self.async_show_form(
+                step_id="reconfigure",
+                data_schema=self._warning_location_query_schema(query),
+                errors={"base": "location_not_found"},
+            )
+        return await self.async_step_select_warning_location()
+
+    @staticmethod
+    def _warning_location_label(candidate: Mapping[str, Any]) -> str:
+        """Display a district candidate with its city and country hierarchy."""
+        values = (candidate.get("name"), candidate.get("adm2"), candidate.get("country"))
+        return " · ".join(str(value).strip() for value in values if str(value).strip())
+
+    @staticmethod
+    def _warning_location_query_schema(query: str | None = None) -> vol.Schema:
+        return vol.Schema(
+            {
+                vol.Required(CONF_WARNING_LOCATION_QUERY, default=query or ""): (
+                    selector.TextSelector()
+                )
+            }
+        )
+
+    async def async_step_select_warning_location(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        """Confirm a district and derive its parent city from provider metadata."""
+        if user_input is not None:
+            selected_id = user_input.get("location_index")
+            district = next(
+                (
+                    candidate
+                    for candidate in self._warning_location_candidates
+                    if candidate.get("id") == selected_id
+                ),
+                None,
+            )
+            if district is None:
+                return self.async_abort(reason="warning_location_not_found")
+            entry = self._get_reconfigure_entry()
+            api = create_qweather_client(self.hass, entry.data)
+            language = LANGUAGE_MAP.get(self.hass.config.language, "en")
+            try:
+                city_query = str(district.get("adm2") or "").strip()
+                response = await api.city_lookup(city_query, lang=language)
+                candidates = response.get("location") if response.get("code") == "200" else []
+                city = city_candidate_for_district(candidates, district)
+                jurisdiction_data = warning_jurisdiction_config(district, city)
+            except (QuantizedLocationMismatch, ValueError, TypeError):
+                return self.async_abort(reason="warning_location_not_found")
+            return self.async_update_reload_and_abort(
+                entry,
+                data={**entry.data, **jurisdiction_data},
+            )
+
+        options = [
+            {
+                "value": candidate.get("id"),
+                "label": self._warning_location_label(candidate),
+            }
+            for candidate in self._warning_location_candidates
+            if isinstance(candidate.get("id"), str) and candidate.get("id")
+        ]
+        return self.async_show_form(
+            step_id="select_warning_location",
+            data_schema=vol.Schema(
+                {
+                    vol.Required("location_index"): selector.SelectSelector(
+                        selector.SelectSelectorConfig(
+                            options=options,
+                            mode=selector.SelectSelectorMode.LIST,
+                        )
+                    )
+                }
+            ),
+        )
+
     async def _async_verify_and_create(
         self, location_info: dict[str, Any]
     ) -> FlowResult:
@@ -506,27 +618,20 @@ class QWeatherConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     async def async_step_reconfigure(
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
-        """重新配置仅支持 JWT/Ed25519 凭据."""
-        entry = self._get_reconfigure_entry()
-
+        """Reconfigure only the independent district-level warning jurisdiction."""
         if user_input is not None:
-            # 合并旧数据与新输入
-            self._temp_data = first_version_reconfigure_data(entry.data, user_input)
-            return await self.async_step_jwt_setup()
+            query = user_input.get(CONF_WARNING_LOCATION_QUERY)
+            if not isinstance(query, str) or not query.strip():
+                return self.async_show_form(
+                    step_id="reconfigure",
+                    data_schema=self._warning_location_query_schema(),
+                    errors={CONF_WARNING_LOCATION_QUERY: "required"},
+                )
+            return await self._async_search_warning_location(query)
 
-        # 初始显示重新配置表单
         return self.async_show_form(
             step_id="reconfigure",
-            data_schema=vol.Schema(
-                {
-                    vol.Required(
-                        CONF_HOST, default=entry.data.get(CONF_HOST, "")
-                    ): selector.TextSelector(),
-                    vol.Required(
-                        CONF_LOCATION_ID, default=entry.data.get(CONF_LOCATION_ID, "")
-                    ): selector.TextSelector(),
-                }
-            ),
+            data_schema=self._warning_location_query_schema(),
         )
 
 

@@ -220,7 +220,7 @@ class HeFengWeather(CoordinatorEntity[QWeatherUpdateCoordinator], WeatherEntity)
                 "pollutants": pollutants,
                 "stations": aqi_data.get("stations",[])
             }
-        attrs["warning"] = data.get("warning", [])
+        attrs["household_warning"] = data.get("household_warning", {})
         attrs["local_warning_status"] = data.get("dataset_status", {}).get(
             "warning", {}
         )

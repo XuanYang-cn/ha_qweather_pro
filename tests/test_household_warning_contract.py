@@ -8,6 +8,7 @@ from custom_components.qweather_pro.household_warnings import (
     WarningContractError,
     WarningJurisdiction,
     build_household_warning_contract,
+    split_household_alerts,
 )
 
 
@@ -23,6 +24,30 @@ JURISDICTION = WarningJurisdiction(
 NOW = datetime.fromisoformat("2026-07-14T08:30:00+08:00")
 
 
+def _location(scope: str) -> dict[str, str]:
+    if scope == "city":
+        return {
+            "id": JURISDICTION.city_id,
+            "name": JURISDICTION.city_name,
+            "country": JURISDICTION.country,
+        }
+    if scope == "district":
+        return {
+            "id": JURISDICTION.district_id,
+            "name": JURISDICTION.district_name,
+            "cityId": JURISDICTION.city_id,
+            "cityName": JURISDICTION.city_name,
+            "country": JURISDICTION.country,
+        }
+    return {
+        "id": "synthetic-other-district",
+        "name": "Synthetic Other District",
+        "cityId": JURISDICTION.city_id,
+        "cityName": JURISDICTION.city_name,
+        "country": JURISDICTION.country,
+    }
+
+
 def _warning(
     *,
     warning_id: str = "rain-city",
@@ -32,6 +57,7 @@ def _warning(
     title: str = "暴雨黄色预警",
     issued: str = "2026-07-14T08:00:00+08:00",
     status: str = "active",
+    scope: str = "city",
 ) -> dict[str, object]:
     warning: dict[str, object] = {
         "id": warning_id,
@@ -44,90 +70,128 @@ def _warning(
         "effectiveTime": issued,
         "expireTime": "2026-07-14T12:00:00+08:00",
         "status": status,
+        "administrativeLevel": scope,
+        "location": _location(scope),
     }
     if level is not None:
         warning["severity"] = level
     return warning
 
 
-def test_higher_district_level_wins_while_both_sources_remain_visible() -> None:
+def test_higher_district_level_wins_while_sources_stay_independently_visible() -> None:
     contract = build_household_warning_contract(
         JURISDICTION,
         city_alerts=[_warning(warning_id="rain-city", level="yellow")],
-        district_alerts=[_warning(warning_id="rain-district", level="red")],
+        district_alerts=[
+            _warning(warning_id="rain-district", level="red", scope="district")
+        ],
         now=NOW,
     )
 
+    warning = contract["effective_warnings"][0]
     assert contract["state"] == "active"
     assert contract["jurisdiction"] == "Synthetic District · Synthetic City · Synthetic Country"
-    assert contract["effective_warnings"] == [
-        {
-            "hazard_id": "rain",
-            "hazard_name": "暴雨",
-            "level": "red",
-            "source_level": "district",
-            "issued": "2026-07-14T08:00:00+08:00",
-            "effective": "2026-07-14T08:00:00+08:00",
-            "expires": "2026-07-14T12:00:00+08:00",
-            "title": "暴雨黄色预警",
-            "text": "暴雨黄色预警 正文",
-            "instruction": "合成防御指南",
-            "sender": "Synthetic Meteorological Service",
-            "source_count": 2,
-            "source": "QWeather",
-        }
-    ]
-    assert {warning["source_level"] for warning in contract["sources"]["rain"]} == {
-        "city",
-        "district",
-    }
+    assert warning["hazard_id"] == "rain"
+    assert warning["level"] == "red"
+    assert warning["source_level"] == "district"
+    assert warning["source_count"] == 2
+    assert contract["sources"]["city"]["state"] == "active"
+    assert contract["sources"]["district"]["state"] == "active"
+    assert contract["recent_changes"] == {"rain": "2026-07-14T08:00:00+08:00"}
 
 
 def test_equal_levels_prefer_the_city_source() -> None:
     contract = build_household_warning_contract(
         JURISDICTION,
-        city_alerts=[_warning(warning_id="rain-city", level="yellow")],
-        district_alerts=[_warning(warning_id="rain-district", level="yellow")],
+        city_alerts=[_warning(level="yellow")],
+        district_alerts=[_warning(level="yellow", scope="district")],
         now=NOW,
     )
 
     assert contract["effective_warnings"][0]["source_level"] == "city"
 
 
-def test_clear_event_ends_one_source_without_ending_the_other() -> None:
+@pytest.mark.parametrize("source_level", ["city", "district"])
+def test_a_single_source_remains_the_effective_warning(source_level: str) -> None:
+    city_alerts = [_warning()] if source_level == "city" else []
+    district_alerts = [
+        _warning(scope="district")
+    ] if source_level == "district" else []
+
+    contract = build_household_warning_contract(
+        JURISDICTION,
+        city_alerts=city_alerts,
+        district_alerts=district_alerts,
+        now=NOW,
+    )
+
+    assert contract["effective_warnings"][0]["source_level"] == source_level
+    other_source = "district" if source_level == "city" else "city"
+    assert contract["sources"][other_source] == {"state": "clear", "warnings": []}
+
+
+def test_latest_source_event_replaces_prior_level_and_content() -> None:
     contract = build_household_warning_contract(
         JURISDICTION,
         city_alerts=[
-            _warning(warning_id="rain-city", level="yellow"),
+            _warning(level="blue", title="暴雨蓝色预警"),
             _warning(
-                warning_id="rain-city-clear",
+                level="yellow",
+                title="暴雨黄色预警（升级）",
+                issued="2026-07-14T08:15:00+08:00",
+            ),
+            _warning(
+                level="blue",
+                title="暴雨蓝色预警（降级）",
+                issued="2026-07-14T08:20:00+08:00",
+            ),
+        ],
+        district_alerts=[],
+        now=NOW,
+    )
+
+    warning = contract["effective_warnings"][0]
+    assert warning["level"] == "blue"
+    assert warning["title"] == "暴雨蓝色预警（降级）"
+    assert contract["recent_changes"] == {"rain": "2026-07-14T08:20:00+08:00"}
+
+
+def test_explicit_clear_ends_one_source_without_ending_the_other() -> None:
+    contract = build_household_warning_contract(
+        JURISDICTION,
+        city_alerts=[
+            _warning(level="yellow"),
+            _warning(
                 level=None,
                 title="暴雨预警解除",
                 issued="2026-07-14T08:15:00+08:00",
                 status="cancelled",
             ),
         ],
-        district_alerts=[_warning(warning_id="rain-district", level="blue")],
+        district_alerts=[_warning(level="blue", scope="district")],
         now=NOW,
     )
 
     assert contract["effective_warnings"][0]["source_level"] == "district"
-    assert contract["sources"]["rain"] == [
-        {
-            "hazard_id": "rain",
-            "hazard_name": "暴雨",
-            "level": "blue",
-            "source_level": "district",
-            "issued": "2026-07-14T08:00:00+08:00",
-            "effective": "2026-07-14T08:00:00+08:00",
-            "expires": "2026-07-14T12:00:00+08:00",
-            "title": "暴雨黄色预警",
-            "text": "暴雨黄色预警 正文",
-            "instruction": "合成防御指南",
-            "sender": "Synthetic Meteorological Service",
-            "source": "QWeather",
-        }
-    ]
+    assert contract["sources"]["city"] == {"state": "clear", "warnings": []}
+    assert contract["sources"]["district"]["warnings"][0]["level"] == "blue"
+
+
+def test_expired_events_and_a_successful_empty_snapshot_are_clear() -> None:
+    expired = _warning()
+    expired["expireTime"] = "2026-07-14T08:00:00+08:00"
+    contract = build_household_warning_contract(
+        JURISDICTION,
+        city_alerts=[expired],
+        district_alerts=[],
+        now=NOW,
+    )
+
+    assert contract["state"] == "clear"
+    assert contract["sources"] == {
+        "city": {"state": "clear", "warnings": []},
+        "district": {"state": "clear", "warnings": []},
+    }
 
 
 def test_title_level_is_a_controlled_fallback_when_structured_level_is_missing() -> None:
@@ -157,3 +221,30 @@ def test_any_unusable_applicable_record_rejects_the_whole_contract(warning) -> N
             district_alerts=[],
             now=NOW,
         )
+
+
+def test_split_uses_structured_jurisdiction_and_excludes_an_other_district() -> None:
+    city, district = split_household_alerts(
+        [
+            _warning(warning_id="city", scope="city"),
+            _warning(warning_id="district", scope="district"),
+            _warning(warning_id="other", scope="other"),
+        ],
+        JURISDICTION,
+    )
+
+    assert [warning["id"] for warning in city] == ["city"]
+    assert [warning["id"] for warning in district] == ["district"]
+
+
+def test_split_rejects_unknown_or_conflicting_applicability_atomically() -> None:
+    unknown = _warning()
+    unknown.pop("administrativeLevel")
+    unknown.pop("location")
+    conflict = _warning(scope="city")
+    conflict["location"] = _location("district")
+
+    with pytest.raises(WarningContractError):
+        split_household_alerts([unknown], JURISDICTION)
+    with pytest.raises(WarningContractError):
+        split_household_alerts([conflict], JURISDICTION)
