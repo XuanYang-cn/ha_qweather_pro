@@ -318,6 +318,14 @@ class QWeatherUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 self._warning_history.as_storage()
             )
 
+    async def _async_prune_warning_history(self, now: datetime) -> None:
+        """Expire local history even while no new warning snapshot can publish."""
+        if not self._warning_history.prune(now):
+            return
+        if self._household_warning_contract.get("state") in {"active", "clear"}:
+            self._household_warning_contract["history"] = self._warning_history.events
+        await self._warning_history_store.async_save(self._warning_history.as_storage())
+
     def _set_household_warning_failure(self, state: str, now: datetime) -> None:
         """Hide local warning content whenever its household contract is unhealthy."""
         self._household_warning_contract = self._empty_household_warning_contract(
@@ -491,6 +499,7 @@ class QWeatherUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         qweather_lang = LANGUAGE_MAP.get(ha_lang, "en")
         restricted_lang = "zh" if ha_lang.startswith("zh") else "en"
         refresh_time = self._now()
+        await self._async_prune_warning_history(refresh_time)
         now_dt = dt_util.as_local(refresh_time)
 
         # 预处理坐标参数
